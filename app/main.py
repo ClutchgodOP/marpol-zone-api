@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
@@ -14,8 +16,6 @@ app = FastAPI(
     version="2.0.0",
 )
 
-import os
-
 origins = [
     "http://127.0.0.1:3000",
     "http://localhost:3000",
@@ -23,11 +23,11 @@ origins = [
     "http://localhost:5500",
     "http://127.0.0.1:8000",
     "http://localhost:8000",
-    "https://volteomaritime-marpol-zone-api.up.railway.app"
+    "https://volteomaritime-marpol-zone-api.up.railway.app",  # fixed: comma was missing
+    "https://volteo-maritime-dashboard.vercel.app",
     "null",
 ]
 
-# Add production origin from environment variable if set
 _prod_origin = os.getenv("ALLOWED_ORIGIN")
 if _prod_origin:
     origins.append(_prod_origin)

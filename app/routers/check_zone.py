@@ -2,38 +2,41 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from app.geo_utils import is_on_land
 from app.models import ComplianceResponse, ShipRequest, SlopCheckRequest
 from app.zone_checker import evaluate_ship_zone, evaluate_slop_discharge
 from app.zones import MARPOL_ZONES
-from app.geo_utils import is_on_land, distance_to_nearest_land_nm
 
 router = APIRouter(prefix="/api/v1", tags=["MARPOL Compliance"])
 
-@router.post("/check-zone", response_model=ComplianceResponse)
-async def check_zone(request: ShipRequest) -> Any:
 
-    # ✅ NEW: Reject if coordinates are on land
-    if is_on_land(request.latitude, request.longitude):
+def _reject_if_on_land(lat: float, lon: float) -> None:
+    """Raise 400 immediately if coordinates fall on land."""
+    if is_on_land(lat, lon):
         raise HTTPException(
             status_code=400,
             detail={
                 "error": "INVALID_POSITION",
-                "message": "The provided coordinates are on land. A ship cannot be positioned on land. Please provide valid sea coordinates.",
-                "latitude": request.latitude,
-                "longitude": request.longitude,
-            }
+                "message": (
+                    "The provided coordinates are on land. "
+                    "A vessel cannot be positioned on land. "
+                    "Please enter valid sea coordinates."
+                ),
+                "latitude": lat,
+                "longitude": lon,
+            },
         )
 
-    result = evaluate_ship_zone(...)
-    
+
 @router.post("/check-zone", response_model=ComplianceResponse)
 async def check_zone(request: ShipRequest) -> Any:
+    _reject_if_on_land(request.latitude, request.longitude)
+
     result = evaluate_ship_zone(
         lat=request.latitude,
         lon=request.longitude,
         waste_type_filter=request.waste_type_filter,
     )
-
     return {
         "ship_id": request.ship_id,
         "evaluation_type": result["evaluation_type"],
@@ -54,6 +57,8 @@ async def check_zone(request: ShipRequest) -> Any:
 
 @router.post("/check-slop", response_model=ComplianceResponse)
 async def check_slop(request: SlopCheckRequest) -> Any:
+    _reject_if_on_land(request.latitude, request.longitude)
+
     result = evaluate_slop_discharge(
         lat=request.latitude,
         lon=request.longitude,
@@ -63,7 +68,6 @@ async def check_slop(request: SlopCheckRequest) -> Any:
         tank_capacity_m3=request.tank_capacity_m3,
         odmcs_operational=request.odmcs_operational,
     )
-
     return {
         "ship_id": request.ship_id,
         "evaluation_type": result["evaluation_type"],

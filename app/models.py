@@ -73,4 +73,4 @@ class ComplianceResponse(BaseModel):
     disposal_assessment: List[DisposalAssessmentItem]
     rules_checklist: List[RuleChecklistItem]
     summary: str
-    meta: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)  # fixed: was "meta"
