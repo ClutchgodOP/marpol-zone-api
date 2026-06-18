@@ -16,7 +16,6 @@ def _reject_if_on_land(lat: float, lon: float) -> None:
         raise HTTPException(
             status_code=400,
             detail={
-                "error": "INVALID_POSITION",
                 "message": (
                     "The provided coordinates are on land. "
                     "A vessel cannot be positioned on land. "
