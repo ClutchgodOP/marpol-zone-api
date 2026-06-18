@@ -1,14 +1,31 @@
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.models import ComplianceResponse, ShipRequest, SlopCheckRequest
 from app.zone_checker import evaluate_ship_zone, evaluate_slop_discharge
 from app.zones import MARPOL_ZONES
+from app.geo_utils import is_on_land, distance_to_nearest_land_nm
 
 router = APIRouter(prefix="/api/v1", tags=["MARPOL Compliance"])
 
+@router.post("/check-zone", response_model=ComplianceResponse)
+async def check_zone(request: ShipRequest) -> Any:
 
+    # ✅ NEW: Reject if coordinates are on land
+    if is_on_land(request.latitude, request.longitude):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "INVALID_POSITION",
+                "message": "The provided coordinates are on land. A ship cannot be positioned on land. Please provide valid sea coordinates.",
+                "latitude": request.latitude,
+                "longitude": request.longitude,
+            }
+        )
+
+    result = evaluate_ship_zone(...)
+    
 @router.post("/check-zone", response_model=ComplianceResponse)
 async def check_zone(request: ShipRequest) -> Any:
     result = evaluate_ship_zone(
