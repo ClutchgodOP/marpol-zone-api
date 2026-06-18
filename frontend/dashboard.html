@@ -1645,17 +1645,58 @@
       }).addTo(appState.map);
     }
 
-    function updateShipMarker(lat, lon, label = "Ship position") {
+    function updateShipMarker(lat, lon, label = 'Ship position') {
       if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
       const coords = [Number(lat), Number(lon)];
+
+      // Reset to default blue Leaflet marker
+      appState.shipMarker.setIcon(new L.Icon.Default());
       appState.shipMarker.setLatLng(coords);
       appState.shipMarker.bindPopup(label);
+
+      // Reset circle to blue
       appState.shipCircle.setLatLng(coords);
+      appState.shipCircle.setStyle({ color: '#3d7cff', fillColor: '#3d7cff' });
+
       appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 5), {
-        animate: true,
-        duration: 0.8
+        animate: true, duration: 0.8,
       });
     }
+
+
+    function updateShipMarkerLand(lat, lon, shipId) {
+      // Shows a RED marker with a warning popup for on-land coordinates
+      if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
+      const coords = [Number(lat), Number(lon)];
+
+      // Red icon for land position
+      const redIcon = L.divIcon({
+        className: '',
+        html: `<div style="
+          width:28px;height:28px;border-radius:50%;
+          background:#ff5d6c;border:3px solid #fff;
+          box-shadow:0 2px 10px rgba(255,93,108,.6);
+          display:grid;place-items:center;
+          font-size:14px;line-height:1;">⛔</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        popupAnchor: [0, -16],
+      });
+
+      appState.shipMarker.setLatLng(coords);
+      appState.shipMarker.setIcon(redIcon);
+      appState.shipMarker.bindPopup(
+        `<b style="color:#ff5d6c">⛔ On land</b><br>${escapeHtml(shipId)}<br><small>${lat}, ${lon}</small>`
+      ).openPopup();
+
+      appState.shipCircle.setLatLng(coords);
+      appState.shipCircle.setStyle({ color: '#ff5d6c', fillColor: '#ff5d6c' });
+
+      appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 7), {
+        animate: true, duration: 0.8,
+      });
+    }
+
 
     function resetMapView() {
       if (!appState.map) return;
@@ -2180,120 +2221,147 @@
     }
 
     async function runZoneCheck() {
-      $("zoneSpinner").style.display = "inline-block";
-      $("zoneResults").innerHTML = "";
+  const lat = parseFloat(zlat.value);
+  const lon = parseFloat(zlon.value);
+  const shipId = id('zship').value.trim() || 'SHIP_101';
+  const filter = id('zfilter').value;
 
-      const payload = {
-        ship_id: $("z_ship").value.trim(),
-        latitude: parseFloat($("z_lat").value),
-        longitude: parseFloat($("z_lon").value)
-      };
+  if (Number.isNaN(lat) || Number.isNaN(lon)) {
+    zoneResults.innerHTML = `<div class="info-banner banner-bad">Please enter valid latitude and longitude values.</div>`;
+    return;
+  }
 
-      const filter = $("z_filter").value;
-      if (filter) {
-        payload.waste_type_filter = filter;
-      }
+  // ✅ ALWAYS update map immediately when user clicks — even before the API responds
+  updateShipMarker(lat, lon, `<b>${escapeHtml(shipId)}</b><br>Checking… (${lat}, ${lon})`);
 
-      try {
-        const response = await fetch(apiBase() + "/api/v1/check-zone", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+  id('zoneSpinner').style.display = 'inline-block';
+  zoneResults.innerHTML = '';
 
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || `HTTP ${response.status}`);
-        }
+  const body = { ship_id: shipId, latitude: lat, longitude: lon };
+  if (filter && filter !== 'All supported types') body.waste_type_filter = filter;
 
-        const data = await response.json();
-        const result = normalizeZoneResponse(data);
-        appState.lastZoneResult = result;
+  try {
+    const response = await fetch(`${apiBase()}/api/v1/check-zone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
 
-        renderZoneResults(result);
-        updateShipMarker(result.latitude, result.longitude, `
-          <strong>${escapeHtml(result.ship_id)}</strong><br>
-          Zone check<br>
-          ${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}
-        `);
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
 
-        addHistoryRecord({
-          time: new Date().toLocaleTimeString(),
-          ship_id: result.ship_id,
-          type: "Zone check",
-          coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
-          distance: `${formatNum(result.distance_to_nearest_land_nm, 2)} NM`,
-          status: result.zone_status,
-          summary: result.summary
-        });
-      } catch (error) {
-        $("zoneResults").innerHTML = `
+      // ✅ If it's an on-land 400 error, show a red marker at those coordinates
+      if (response.status === 400 && errData?.detail?.error === 'INVALID_POSITION') {
+        updateShipMarkerLand(lat, lon, shipId);
+        zoneResults.innerHTML = `
           <div class="info-banner banner-bad">
-            Failed to run zone check.
-          </div>
-        `;
-      } finally {
-        $("zoneSpinner").style.display = "none";
+            <strong>⛔ Position is on land</strong><br>
+            Coordinates <strong>(${lat}, ${lon})</strong> fall on land.<br>
+            A vessel cannot be positioned on land. Please enter valid sea coordinates.
+          </div>`;
+      } else {
+        // Generic API error — map already updated above, just show the error
+        zoneResults.innerHTML = `<div class="info-banner banner-bad">API error ${response.status}: ${escapeHtml(errData?.detail?.message || errData?.detail || 'Unknown error')}</div>`;
       }
+      return;
     }
+
+    const raw = await response.json();
+    const result = normalizeZoneResponse(raw);
+    appState.lastZoneResult = result;
+    // ✅ Update marker again with full result label
+    updateShipMarker(lat, lon, `<b>${escapeHtml(shipId)}</b><br>${escapeHtml(result.zone_status)}<br>${formatNum(result.distance_to_nearest_land_nm, 2)} NM from land`);
+    renderZoneResults(result);
+    addHistoryRecord({
+      time: new Date().toLocaleTimeString(),
+      ship_id: result.ship_id,
+      type: 'Zone',
+      lat, lon,
+      distance: result.distance_to_nearest_land_nm,
+      status: result.zone_status,
+      summary: result.summary,
+    });
+  } catch (err) {
+    zoneResults.innerHTML = `<div class="info-banner banner-bad">Request failed: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    id('zoneSpinner').style.display = 'none';
+  }
+}
+
 
     async function runSlopCheck() {
-      $("slopSpinner").style.display = "inline-block";
-      $("slopResults").innerHTML = "";
+  const lat = parseFloat(slat.value);
+  const lon = parseFloat(slon.value);
+  const shipId = id('sship').value.trim() || 'SHIP_101';
 
-      const payload = {
-        ship_id: $("s_ship").value.trim(),
-        latitude: parseFloat($("s_lat").value),
-        longitude: parseFloat($("s_lon").value),
-        ship_speed_knots: parseFloat($("s_speed").value),
-        oil_content_ppm: parseFloat($("s_ppm").value),
-        discharge_rate_lpnm: parseFloat($("s_rate").value),
-        tank_capacity_m3: parseFloat($("s_tank").value),
-        odmcs_operational: $("s_odmcs").value === "true"
-      };
+  if (Number.isNaN(lat) || Number.isNaN(lon)) {
+    slopResults.innerHTML = `<div class="info-banner banner-bad">Please enter valid latitude and longitude values.</div>`;
+    return;
+  }
 
-      try {
-        const response = await fetch(apiBase() + "/api/v1/check-slop", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+  // ✅ ALWAYS update map immediately when user clicks
+  updateShipMarker(lat, lon, `<b>${escapeHtml(shipId)}</b><br>Checking slop… (${lat}, ${lon})`);
 
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || `HTTP ${response.status}`);
-        }
+  id('slopSpinner').style.display = 'inline-block';
+  slopResults.innerHTML = '';
 
-        const data = await response.json();
-        const result = normalizeSlopResponse(data);
-        appState.lastSlopResult = result;
+  try {
+    const response = await fetch(`${apiBase()}/api/v1/check-slop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ship_id: shipId,
+        latitude: lat,
+        longitude: lon,
+        ship_speed_knots: parseFloat(id('sspeed').value) || 0,
+        oil_content_ppm: parseFloat(id('sppm').value) || 0,
+        discharge_rate_lpnm: parseFloat(id('srate').value) || 0,
+        tank_capacity_m3: parseFloat(id('stank').value) || 0,
+        odmcs_operational: id('sodmcs').value === 'true',
+      }),
+    });
 
-        renderSlopResults(result);
-        updateShipMarker(result.latitude, result.longitude, `
-          <strong>${escapeHtml(result.ship_id)}</strong><br>
-          Slop check<br>
-          ${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}
-        `);
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
 
-        addHistoryRecord({
-          time: new Date().toLocaleTimeString(),
-          ship_id: result.ship_id,
-          type: "Slop check",
-          coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
-          distance: `${formatNum(result.distance_to_nearest_land_nm, 2)} NM`,
-          status: result.overall_status || (safeArray(result.disposal_assessment)[0]?.allowed ? "PERMITTED" : "NOT PERMITTED"),
-          summary: result.summary
-        });
-      } catch (error) {
-        $("slopResults").innerHTML = `
+      // ✅ On-land error — red marker at the land coordinates
+      if (response.status === 400 && errData?.detail?.error === 'INVALID_POSITION') {
+        updateShipMarkerLand(lat, lon, shipId);
+        slopResults.innerHTML = `
           <div class="info-banner banner-bad">
-            Failed to run slop check. ${escapeHtml(error.message || "Unknown error")}
-          </div>
-        `;
-      } finally {
-        $("slopSpinner").style.display = "none";
+            <strong>⛔ Position is on land</strong><br>
+            Coordinates <strong>(${lat}, ${lon})</strong> fall on land.<br>
+            A vessel cannot be positioned on land. Please enter valid sea coordinates.
+          </div>`;
+      } else {
+        slopResults.innerHTML = `<div class="info-banner banner-bad">API error ${response.status}: ${escapeHtml(errData?.detail?.message || errData?.detail || 'Unknown error')}</div>`;
       }
+      return;
     }
+
+    const raw = await response.json();
+    const result = normalizeSlopResponse(raw);
+    appState.lastSlopResult = result;
+    // ✅ Update marker with slop result
+    const isAllowed = safeArray(result.disposal_assessment)[0]?.allowed || /permit/i.test(result.overall_status);
+    updateShipMarker(lat, lon, `<b>${escapeHtml(shipId)}</b><br>Slop: ${isAllowed ? '✅ Permitted' : '❌ Not permitted'}<br>${formatNum(result.distance_to_nearest_land_nm, 2)} NM from land`);
+    renderSlopResults(result);
+    addHistoryRecord({
+      time: new Date().toLocaleTimeString(),
+      ship_id: result.ship_id,
+      type: 'Slop',
+      lat, lon,
+      distance: result.distance_to_nearest_land_nm,
+      status: result.overall_status || (isAllowed ? 'PERMITTED' : 'NOT PERMITTED'),
+      summary: result.summary,
+    });
+  } catch (err) {
+    slopResults.innerHTML = `<div class="info-banner banner-bad">Request failed: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    id('slopSpinner').style.display = 'none';
+  }
+}
+
 
     function preloadExamples() {
       renderHistory();
