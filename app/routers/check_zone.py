@@ -15,7 +15,7 @@ def _reject_if_on_land(lat: float, lon: float) -> None:
     if is_on_land(lat, lon):
         raise HTTPException(
             status_code=400,
-            detail=f"Coordinates ({lat}, {lon}) are on land. Please provide valid ocean coordinates.",
+            detail=f"Coordinates ({lat}, {lon}) are on land. Please provide valid sea coordinates.",
         )
 
 
