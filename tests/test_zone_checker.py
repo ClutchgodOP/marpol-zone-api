@@ -19,7 +19,7 @@ def test_ship_in_mediterranean():
         json={
             "ship_id": "TEST_01",
             "latitude": 38.0,
-            "longitude": 15.0,
+            "longitude": 17.0,
         },
     )
 
@@ -85,7 +85,7 @@ def test_optional_waste_type_filter():
         json={
             "ship_id": "TEST_04",
             "latitude": 38.0,
-            "longitude": 15.0,
+            "longitude": 17.0,
             "waste_type_filter": "Oil",
         },
     )
