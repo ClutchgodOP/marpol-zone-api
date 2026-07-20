@@ -1,19 +1,20 @@
 from math import asin, cos, pi, radians, sin, sqrt
 from typing import List, Tuple
+
 from shapely.geometry import Point
 
 try:
     from global_land_mask import globe as _globe
     _USE_GLOBE = True
-except ImportError as e:
-    # This will now print the exact reason it failed to your Railway logs!
-    print(f"CRITICAL ERROR: Land mask import failed: {e}")
+except ImportError:
     _globe = None
     _USE_GLOBE = False
+
 
 def point_in_polygon(lat: float, lon: float, polygon) -> bool:
     ship_point = Point(lon, lat)
     return polygon.contains(ship_point) or polygon.touches(ship_point)
+
 
 def haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in nautical miles."""
@@ -26,17 +27,20 @@ def haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     )
     return R_km * 2 * asin(sqrt(a)) * 0.539956803
 
+
 def is_on_land(lat: float, lon: float) -> bool:
     """Returns True if coordinates are on land anywhere on the globe."""
     if _USE_GLOBE:
         return bool(_globe.is_land(lat, lon))
     return False
 
+
 def nearest_land_distance_nm(lat: float, lon: float) -> float:
     """Distance in NM to nearest land. Uses global grid search when available."""
     if _USE_GLOBE:
         return _globe_nearest_land_nm(lat, lon)
     return _reference_nearest_land_nm(lat, lon)
+
 
 def _globe_nearest_land_nm(lat: float, lon: float) -> float:
     if _globe.is_land(lat, lon):
@@ -51,6 +55,7 @@ def _globe_nearest_land_nm(lat: float, lon: float) -> float:
             if _globe.is_land(check_lat, check_lon):
                 return round(haversine_nm(lat, lon, check_lat, check_lon), 2)
     return 999.0
+
 
 def _reference_nearest_land_nm(lat: float, lon: float) -> float:
     """Fallback 30-point method — only used if global-land-mask is not installed."""
