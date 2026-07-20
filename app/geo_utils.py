@@ -1,16 +1,23 @@
 from math import asin, cos, pi, radians, sin, sqrt
 from typing import List, Tuple
-import httpx
-from shapely.geometry import Point, shape, MultiPolygon
-from shapely.prepared import prep
 
-_PREPARED_LAND = None
+from shapely.geometry import Point
+
+try:
+    from global_land_mask import globe as _globe
+    _USE_GLOBE = True
+except ImportError:
+    _globe = None
+    _USE_GLOBE = False
+
 
 def point_in_polygon(lat: float, lon: float, polygon) -> bool:
     ship_point = Point(lon, lat)
     return polygon.contains(ship_point) or polygon.touches(ship_point)
 
+
 def haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in nautical miles."""
     R_km = 6371.0088
     dlat = radians(lat2 - lat1)
     dlon = radians(lon2 - lon1)
@@ -20,41 +27,38 @@ def haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     )
     return R_km * 2 * asin(sqrt(a)) * 0.539956803
 
-def _load_land_polygon():
-    global _PREPARED_LAND
-    if _PREPARED_LAND is not None:
-        return
-    try:
-        url = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_land.geojson"
-        response = httpx.get(url, timeout=15.0)
-        response.raise_for_status()
-        
-        polygons = []
-        for feature in response.json()["features"]:
-            geom = shape(feature["geometry"])
-            if geom.geom_type == 'Polygon':
-                polygons.append(geom)
-            elif geom.geom_type == 'MultiPolygon':
-                polygons.extend(geom.geoms)
-                
-        _PREPARED_LAND = prep(MultiPolygon(polygons))
-    except Exception as e:
-        print(f"Failed to load land polygon: {e}")
-        _PREPARED_LAND = False
 
 def is_on_land(lat: float, lon: float) -> bool:
-    global _PREPARED_LAND
-    if _PREPARED_LAND is None:
-        _load_land_polygon()
-        
-    if _PREPARED_LAND:
-        return _PREPARED_LAND.contains(Point(lon, lat))
+    """Returns True if coordinates are on land anywhere on the globe."""
+    if _USE_GLOBE:
+        return bool(_globe.is_land(lat, lon))
     return False
 
+
 def nearest_land_distance_nm(lat: float, lon: float) -> float:
+    """Distance in NM to nearest land. Uses global grid search when available."""
+    if _USE_GLOBE:
+        return _globe_nearest_land_nm(lat, lon)
     return _reference_nearest_land_nm(lat, lon)
 
+
+def _globe_nearest_land_nm(lat: float, lon: float) -> float:
+    if _globe.is_land(lat, lon):
+        return 0.0
+    for step in range(1, 151):               # 0.1° to 15.0° (~900 NM)
+        radius_deg = step * 0.1
+        n_samples = max(16, int(radius_deg * 40))
+        for i in range(n_samples):
+            angle = 2 * pi * i / n_samples
+            check_lat = max(-90.0, min(90.0, lat + radius_deg * cos(angle)))
+            check_lon = (((lon + radius_deg * sin(angle)) + 180.0) % 360.0) - 180.0
+            if _globe.is_land(check_lat, check_lon):
+                return round(haversine_nm(lat, lon, check_lat, check_lon), 2)
+    return 999.0
+
+
 def _reference_nearest_land_nm(lat: float, lon: float) -> float:
+    """Fallback 30-point method — only used if global-land-mask is not installed."""
     LAND_REFERENCE_POINTS: List[Tuple[str, float, float]] = [
         ("Spain", 36.0, -5.6), ("France", 43.0, 5.0),
         ("Italy", 38.0, 15.0), ("Greece", 37.9, 23.7),
