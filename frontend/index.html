@@ -1533,689 +1533,302 @@
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+const appState = {
+  history: JSON.parse(localStorage.getItem('marpol_history')) || [], map: null, shipMarker: null, shipCircle: null,
+  apiStatus: 'checking', lastZoneResult: null, lastSlopResult: null,
+  currentTheme: document.documentElement.getAttribute('data-theme') || 'dark',
+  initialMap: { center: [20, 0], zoom: 2 }
+};
 
-  <script>
-    const appState = {
-      history: JSON.parse(localStorage.getItem('marpol_history')) || [],
-      map: null,
-      shipMarker: null,
-      shipCircle: null,
-      apiStatus: "checking",
-      lastZoneResult: null,
-      lastSlopResult: null,
-      currentTheme: document.documentElement.getAttribute("data-theme") || "dark",
-      initialMap: {
-        center: [20, 0],
-        zoom: 2
-      }
-    };
+const id = i => document.getElementById(i);
+const apiBase = () => id('apiBase').value.trim().replace(/\/$/, '');
+const formatNum = (value, digits = 2) => (value == null || Number.isNaN(Number(value))) ? '—' : Number(value).toFixed(digits);
+const escapeHtml = value => { const d = document.createElement('div'); d.textContent = value == null ? String(value) : value; return d.innerHTML; };
+const safeArray = value => Array.isArray(value) ? value : [];
 
-    function $(id) {
-      return document.getElementById(id);
-    }
+function setTheme(theme) {
+  appState.currentTheme = theme;
+  document.documentElement.setAttribute('data-theme', theme);
+  id('themeIcon').textContent = theme === 'dark' ? '☀️' : '🌙';
+  id('themeLabel').textContent = theme === 'dark' ? 'Switch theme' : 'Switch theme';
+}
+function toggleTheme() { setTheme(appState.currentTheme === 'dark' ? 'light' : 'dark'); }
 
-    function apiBase() {
-      return $("apiBase").value.trim().replace(/\/$/, "");
-    }
-
-    function formatNum(value, digits = 2) {
-      if (value === null || value === undefined || Number.isNaN(Number(value))) {
-        return "—";
-      }
-      return Number(value).toFixed(digits);
-    }
-
-    function escapeHtml(value) {
-      const div = document.createElement("div");
-      div.textContent = value == null ? "" : String(value);
-      return div.innerHTML;
-    }
-
-    function safeArray(value) {
-      return Array.isArray(value) ? value : [];
-    }
-
-    function setTheme(theme) {
-      appState.currentTheme = theme;
-      document.documentElement.setAttribute("data-theme", theme);
-      $("themeIcon").textContent = theme === "dark" ? "🌙" : "☀️";
-      $("themeLabel").textContent = theme === "dark" ? "Switch theme" : "Switch theme";
-    }
-
-    function toggleTheme() {
-      setTheme(appState.currentTheme === "dark" ? "light" : "dark");
-    }
-
-    function showTab(tabName, btn) {
-      const tabs = ["zone", "slop", "history"];
-      tabs.forEach(name => {
-        const section = $("tab-" + name);
-        const navBtn = document.querySelector(`[data-tab-btn="${name}"]`);
-        if (section) {
-          section.classList.toggle("hidden", name !== tabName);
-        }
-        if (navBtn) {
-          navBtn.classList.toggle("active", name === tabName);
-        }
-      });
-    }
-
-    function setApiPill(mode, text) {
-      const pill = $("apiStatusPill");
-      pill.classList.remove("ok", "warn", "bad");
-      pill.classList.add(mode);
-      $("apiStatusText").textContent = text;
-    }
-
-    async function checkHealth() {
-      try {
-        const response = await fetch(apiBase() + "/health");
-        if (!response.ok) {
-          throw new Error("Health check failed");
-        }
-        const data = await response.json();
-        appState.apiStatus = "ok";
-        setApiPill("ok", `${data.service || "API"} connected`);
-      } catch (error) {
-        appState.apiStatus = "bad";
-        setApiPill("bad", "API offline or blocked");
-      }
-    }
-
-    function initMap() {
-      appState.map = L.map("map", {
-        zoomControl: true,
-        attributionControl: true
-      }).setView(appState.initialMap.center, appState.initialMap.zoom);
-
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 18,
-        attribution: "&copy; OpenStreetMap contributors"
-      }).addTo(appState.map);
-
-      appState.shipMarker = L.marker(appState.initialMap.center).addTo(appState.map);
-      appState.shipMarker.bindPopup("Ship position");
-
-      appState.shipCircle = L.circle(appState.initialMap.center, {
-        radius: 12000,
-        color: "#3d7cff",
-        fillColor: "#3d7cff",
-        fillOpacity: 0.15,
-        weight: 1.5
-      }).addTo(appState.map);
-    }
-
-    function updateShipMarker(lat, lon, label = 'Ship position') {
-      if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
-      const coords = [Number(lat), Number(lon)];
-        appState.shipMarker.setLatLng(coords);
-        appState.shipMarker.bindPopup(label);
-        appState.shipCircle.setLatLng(coords);
-        appState.shipCircle.setStyle({ color: '#3d7cff', fillColor: '#3d7cff' }); // reset to blue
-        appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 5), { animate: true, duration: 0.8 });
+function showTab(tabName, btn) {
+  ['zone','slop','history'].forEach(name => {
+    const section = id(`tab-${name}`);
+    const navBtn = document.querySelector(`[data-tab-btn="${name}"]`);
+    if (section) section.classList.toggle('hidden', name !== tabName);
+    if (navBtn) navBtn.classList.toggle('active', name === tabName);
+  });
 }
 
-
-
-    function updateShipMarkerLand(lat, lon, shipId) {
-      // Shows a RED marker with a warning popup for on-land coordinates
-      if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
-      const coords = [Number(lat), Number(lon)];
-
-      // Red icon for land position
-      const redIcon = L.divIcon({
-        className: '',
-        html: `<div style="
-          width:28px;height:28px;border-radius:50%;
-          background:#ff5d6c;border:3px solid #fff;
-          box-shadow:0 2px 10px rgba(255,93,108,.6);
-          display:grid;place-items:center;
-          font-size:14px;line-height:1;">⛔</div>`,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
-        popupAnchor: [0, -16],
-      });
-
-      appState.shipMarker.setLatLng(coords);
-      appState.shipMarker.setIcon(redIcon);
-      appState.shipMarker.bindPopup(
-        `<b style="color:#ff5d6c">⛔ On land</b><br>${escapeHtml(shipId)}<br><small>${lat}, ${lon}</small>`
-      ).openPopup();
-
-      appState.shipCircle.setLatLng(coords);
-      appState.shipCircle.setStyle({ color: '#ff5d6c', fillColor: '#ff5d6c' });
-
-      appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 7), {
-        animate: true, duration: 0.8,
-      });
-    }
-
-
-    function resetMapView() {
-      if (!appState.map) return;
-      appState.map.setView(appState.initialMap.center, appState.initialMap.zoom);
-    }
-
-    function syncMapFromZone() {
-      const lat = parseFloat($("z_lat").value);
-      const lon = parseFloat($("z_lon").value);
-      if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
-        updateShipMarker(lat, lon, `Zone check position<br>${lat}, ${lon}`);
-      }
-    }
-
-    function syncMapFromSlop() {
-      const lat = parseFloat($("s_lat").value);
-      const lon = parseFloat($("s_lon").value);
-      if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
-        updateShipMarker(lat, lon, `Slop check position<br>${lat}, ${lon}`);
-      }
-    }
-
-    function normalizeZoneResponse(data) {
-      const activeZones = safeArray(data.active_zones);
-
-      let rulesChecklist = safeArray(data.rules_checklist);
-      let disposalAssessment = safeArray(data.disposal_assessment);
-      let annexSummary = safeArray(data.annex_summary);
-
-      if (!rulesChecklist.length && data.discharge_checklist && typeof data.discharge_checklist === "object") {
-        const legacyEntries = Object.entries(data.discharge_checklist);
-        disposalAssessment = legacyEntries.map(([key, value]) => {
-          const allowed = Boolean(value && value.allowed);
-          return {
-            code: key,
-            label: key,
-            allowed,
-            reason: value && value.note ? value.note : (allowed ? "Allowed" : "Restricted")
-          };
-        });
-      }
-
-      if (!rulesChecklist.length) {
-        rulesChecklist = [
-          {
-            rule_code: "DISTANCE_12NM",
-            rule_name: "Distance from nearest land at least 12 NM",
-            passed: Boolean(data.distance_to_nearest_land_nm >= 12),
-            actual_value: `${formatNum(data.distance_to_nearest_land_nm, 2)} NM`,
-            required_value: ">= 12.00 NM",
-            note: "Derived frontend fallback when backend does not return rules_checklist."
-          },
-          {
-            rule_code: "SPECIAL_AREA",
-            rule_name: "Outside MARPOL special area for unrestricted disposal",
-            passed: !Boolean(data.in_special_area || (data.zone_status === "RESTRICTED")),
-            actual_value: data.zone_status || "Unknown",
-            required_value: "SAFE / outside restricted areas",
-            note: "Derived frontend fallback when backend does not return rules_checklist."
-          }
-        ];
-      }
-
-      if (!disposalAssessment.length) {
-        disposalAssessment = [
-          {
-            code: "generic",
-            label: "Operational disposal view",
-            allowed: data.zone_status !== "RESTRICTED" && Number(data.distance_to_nearest_land_nm) >= 12,
-            reason: data.summary || "Derived from legacy response."
-          }
-        ];
-      }
-
-      if (!annexSummary.length && activeZones.length) {
-        const grouped = {};
-        activeZones.forEach(zone => {
-          const annex = zone.annex || "Unknown";
-          if (!grouped[annex]) {
-            grouped[annex] = { annex, active_zone_count: 0, waste_types: [] };
-          }
-          grouped[annex].active_zone_count += 1;
-          if (zone.waste_type && !grouped[annex].waste_types.includes(zone.waste_type)) {
-            grouped[annex].waste_types.push(zone.waste_type);
-          }
-          if (zone.type && !grouped[annex].waste_types.includes(zone.type)) {
-            grouped[annex].waste_types.push(zone.type);
-          }
-        });
-        annexSummary = Object.values(grouped);
-      }
-
-      return {
-        ship_id: data.ship_id || $("z_ship").value || "—",
-        evaluation_type: data.evaluation_type || "zone_check",
-        latitude: Number(data.latitude ?? $("z_lat").value),
-        longitude: Number(data.longitude ?? $("z_lon").value),
-        distance_to_nearest_land_nm: Number(data.distance_to_nearest_land_nm ?? 0),
-        nearest_land_rule_satisfied: typeof data.nearest_land_rule_satisfied === "boolean"
-          ? data.nearest_land_rule_satisfied
-          : Number(data.distance_to_nearest_land_nm ?? 0) >= 12,
-        in_special_area: typeof data.in_special_area === "boolean"
-          ? data.in_special_area
-          : (data.zone_status === "RESTRICTED" || activeZones.length > 0),
-        zone_status: data.zone_status || (activeZones.length ? "RESTRICTED" : "SAFE"),
-        active_zones: activeZones,
-        annex_summary: annexSummary,
-        disposal_assessment: disposalAssessment,
-        rules_checklist: rulesChecklist,
-        summary: data.summary || "No summary returned by API.",
-        metadata: data.metadata || {}
-      };
-    }
-
-    function normalizeSlopResponse(data) {
-      const normalized = normalizeZoneResponse(data);
-
-      let rulesChecklist = safeArray(data.rules_checklist);
-
-      if (!rulesChecklist.length && safeArray(data.checklist).length) {
-        rulesChecklist = data.checklist.map((item, index) => ({
-          rule_code: item.rule_code || `RULE_${index + 1}`,
-          rule_name: item.rule || item.rule_name || `Rule ${index + 1}`,
-          passed: Boolean(item.passed),
-          actual_value: item.actual_value || "—",
-          required_value: item.required_value || "—",
-          note: item.note || ""
-        }));
-      }
-
-      if (!rulesChecklist.length) {
-        rulesChecklist = normalized.rules_checklist;
-      }
-
-      let disposalAssessment = safeArray(data.disposal_assessment);
-
-      if (!disposalAssessment.length) {
-        const permitted =
-          typeof data.slop_discharge_allowed === "boolean"
-            ? data.slop_discharge_allowed
-            : rulesChecklist.every(rule => Boolean(rule.passed));
-
-        disposalAssessment = [
-          {
-            code: "slop",
-            label: "Slop / Oil mixed water",
-            allowed: permitted,
-            reason: data.reason || data.summary || "Derived from slop response."
-          }
-        ];
-      }
-
-      const summary = data.summary || data.reason || normalized.summary;
-      const status =
-        data.overall_status ||
-        (disposalAssessment[0] && disposalAssessment[0].allowed ? "PERMITTED" : "NOT PERMITTED");
-
-      return {
-        ...normalized,
-        evaluation_type: data.evaluation_type || "slop_check",
-        rules_checklist: rulesChecklist,
-        disposal_assessment: disposalAssessment,
-        summary,
-        overall_status: status
-      };
-    }
-
-    function buildStatusTag(text, mode) {
-      return `<span class="tag ${mode}">${escapeHtml(text)}</span>`;
-    }
-
-    function renderStatsTop(result, isSlop = false) {
-      const mainStatus = isSlop
-        ? (result.overall_status || (result.disposal_assessment[0]?.allowed ? "PERMITTED" : "NOT PERMITTED"))
-        : (result.zone_status || "UNKNOWN");
-
-      const statusClass = /permit|safe/i.test(mainStatus) ? "ok" : /restricted|not/i.test(mainStatus) ? "error" : "warning";
-
-      return `
-        <div class="stats-grid">
-          <div class="stat-card">
-            <span class="stat-label">${isSlop ? "Overall slop status" : "Zone status"}</span>
-            <div class="stat-value">${escapeHtml(mainStatus)}</div>
-            <div class="stat-note">
-              ${isSlop ? "Operational result from the slop rule set." : "General area safety or restriction status."}
-            </div>
-          </div>
-
-          <div class="stat-card">
-            <span class="stat-label">Distance to nearest land</span>
-            <div class="stat-value">${formatNum(result.distance_to_nearest_land_nm, 2)} NM</div>
-            <div class="stat-note">
-              ${result.nearest_land_rule_satisfied ? "12 NM rule satisfied." : "Below the 12 NM threshold."}
-            </div>
-          </div>
-
-          <div class="stat-card">
-            <span class="stat-label">Active zones</span>
-            <div class="stat-value">${safeArray(result.active_zones).length}</div>
-            <div class="stat-note">
-              ${result.in_special_area ? "At least one MARPOL zone is active." : "No active MARPOL zones returned."}
-            </div>
-          </div>
-
-          <div class="stat-card">
-            <span class="stat-label">${isSlop ? "Checklist rules" : "Disposal items"}</span>
-            <div class="stat-value">${isSlop ? safeArray(result.rules_checklist).length : safeArray(result.disposal_assessment).length}</div>
-            <div class="stat-note">
-              ${isSlop ? "Rules evaluated for slop discharge." : "Operational disposal outcomes presented in the checklist."}
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    function renderActiveZones(result) {
-      const zones = safeArray(result.active_zones);
-
-      if (!zones.length) {
-        return `
-          <div class="empty-state">
-            No active MARPOL zones were returned for the current coordinates.
-          </div>
-        `;
-      }
-
-      const tags = zones.map(zone => {
-        const label = `${zone.annex ? "Annex " + zone.annex : "Annex ?"} — ${zone.zone_name || zone.name || "Unnamed zone"}`;
-        return `<span class="tag zone">${escapeHtml(label)}</span>`;
-      }).join("");
-
-      const items = zones.map(zone => `
-        <div class="list-item">
-          <div class="list-icon no">!</div>
-          <div>
-            <div class="list-item-title">${escapeHtml(zone.zone_name || zone.name || "Unnamed MARPOL zone")}</div>
-            <div class="list-item-subtitle">
-              ${escapeHtml(zone.restriction || "Restriction returned by API not available.")}
-            </div>
-          </div>
-          <div class="list-item-meta">
-            <div><strong>Annex:</strong> ${escapeHtml(zone.annex || "—")}</div>
-            <div><strong>Waste:</strong> ${escapeHtml(zone.waste_type || zone.type || "—")}</div>
-            <div><strong>ID:</strong> ${escapeHtml(zone.zone_id || "—")}</div>
-          </div>
-        </div>
-      `).join("");
-
-      return `
-        <div class="tags-wrap">${tags}</div>
-        <div class="list-wrap">${items}</div>
-      `;
-    }
-
-    function renderAnnexSummary(result) {
-      const annexes = safeArray(result.annex_summary);
-
-      if (!annexes.length) {
-        return `
-          <div class="empty-state">
-            Annex summary is empty for this result. This usually means no active zones were found.
-          </div>
-        `;
-      }
-
-      return `
-        <div class="list-wrap">
-          ${annexes.map(item => `
-            <div class="list-item">
-              <div class="list-icon ok">A</div>
-              <div>
-                <div class="list-item-title">Annex ${escapeHtml(item.annex || "—")}</div>
-                <div class="list-item-subtitle">
-                  Waste types: ${escapeHtml(safeArray(item.waste_types).join(", ") || "—")}
-                </div>
-              </div>
-              <div class="list-item-meta">
-                <div><strong>Zones:</strong> ${escapeHtml(item.active_zone_count ?? 0)}</div>
-              </div>
-            </div>
-          `).join("")}
-        </div>
-      `;
-    }
-
-    function renderDisposalAssessment(result) {
-      const items = safeArray(result.disposal_assessment);
-
-      if (!items.length) {
-        return `
-          <div class="empty-state">
-            No disposal assessment items were returned.
-          </div>
-        `;
-      }
-
-      return `
-        <div class="list-wrap">
-          ${items.map(item => `
-            <div class="list-item">
-              <div class="list-icon ${item.allowed ? "ok" : "no"}">${item.allowed ? "✓" : "✕"}</div>
-              <div>
-                <div class="list-item-title">${escapeHtml(item.label || item.code || "Assessment item")}</div>
-                <div class="list-item-subtitle">${escapeHtml(item.reason || "No explanation returned.")}</div>
-              </div>
-              <div class="list-item-meta">
-                ${item.allowed
-                  ? '<span class="tag ok">Allowed</span>'
-                  : '<span class="tag error">Restricted</span>'
-                }
-              </div>
-            </div>
-          `).join("")}
-        </div>
-      `;
-    }
-
-    function renderRulesChecklist(result) {
-      const rules = safeArray(result.rules_checklist);
-
-      if (!rules.length) {
-        return `
-          <div class="empty-state">
-            No rules checklist was returned.
-          </div>
-        `;
-      }
-
-      return `
-        <div class="list-wrap">
-          ${rules.map(rule => `
-            <div class="list-item">
-              <div class="list-icon ${rule.passed ? "ok" : "no"}">${rule.passed ? "✓" : "✕"}</div>
-              <div>
-                <div class="list-item-title">${escapeHtml(rule.rule_name || rule.rule_code || "Rule")}</div>
-                <div class="list-item-subtitle">${escapeHtml(rule.note || "No note returned.")}</div>
-              </div>
-              <div class="list-item-meta">
-                <div><strong>Actual:</strong> ${escapeHtml(rule.actual_value || "—")}</div>
-                <div><strong>Required:</strong> ${escapeHtml(rule.required_value || "—")}</div>
-              </div>
-            </div>
-          `).join("")}
-        </div>
-      `;
-    }
-
-    function renderZoneResults(result) {
-      const summaryBannerClass =
-        result.zone_status === "SAFE" && result.nearest_land_rule_satisfied
-          ? "info-banner banner-good"
-          : "info-banner banner-bad";
-
-      $("zoneResults").innerHTML = `
-        ${renderStatsTop(result, false)}
-
-        <div class="${summaryBannerClass}">
-          ${escapeHtml(result.summary || "No summary returned.")}
-        </div>
-
-        <div class="panel-grid">
-          <div class="panel card">
-            <div class="section-heading">
-              <div>
-                <div class="section-title" style="font-size:1.15rem;">Active MARPOL zones</div>
-                <div class="section-copy">
-                  Lists every active zone returned by the API for the current coordinates.
-                </div>
-              </div>
-            </div>
-            ${renderActiveZones(result)}
-          </div>
-
-          <div class="panel card">
-            <div class="section-heading">
-              <div>
-                <div class="section-title" style="font-size:1.15rem;">Annex summary</div>
-                <div class="section-copy">
-                  Groups active zones by annex so the operator can understand which MARPOL categories are impacted.
-                </div>
-              </div>
-            </div>
-            ${renderAnnexSummary(result)}
-          </div>
-        </div>
-
-        <div class="panel-grid">
-          <div class="panel card">
-            <div class="section-heading">
-              <div>
-                <div class="section-title" style="font-size:1.15rem;">Disposal assessment</div>
-                <div class="section-copy">
-                  Practical checklist of what can be disposed or what is restricted under the current position logic.
-                </div>
-              </div>
-            </div>
-            ${renderDisposalAssessment(result)}
-          </div>
-
-          <div class="panel card">
-            <div class="section-heading">
-              <div>
-                <div class="section-title" style="font-size:1.15rem;">Rules checklist</div>
-                <div class="section-copy">
-                  Operational rules rendered as readable pass/fail checks.
-                </div>
-              </div>
-            </div>
-            ${renderRulesChecklist(result)}
-          </div>
-        </div>
-      `;
-    }
-
-    function renderSlopResults(result) {
-      const isAllowed = safeArray(result.disposal_assessment)[0]?.allowed ||
-        /permit/i.test(result.overall_status || "");
-
-      const bannerClass = isAllowed ? "info-banner banner-good" : "info-banner banner-bad";
-
-      $("slopResults").innerHTML = `
-        ${renderStatsTop(result, true)}
-
-        <div class="${bannerClass}">
-          ${escapeHtml(result.summary || "No summary returned.")}
-        </div>
-
-        <div class="subgrid">
-          <div class="panel card">
-            <div class="section-heading">
-              <div>
-                <div class="section-title" style="font-size:1.15rem;">Slop decision</div>
-                <div class="section-copy">
-                  Final business-facing result for oil mixed water or slop disposal under the current input conditions.
-                </div>
-              </div>
-            </div>
-
-            <div class="tags-wrap">
-              ${buildStatusTag(result.overall_status || (isAllowed ? "PERMITTED" : "NOT PERMITTED"), isAllowed ? "ok" : "error")}
-              ${buildStatusTag(result.in_special_area ? "In special area" : "Outside special area", result.in_special_area ? "error" : "ok")}
-              ${buildStatusTag(result.nearest_land_rule_satisfied ? ">= 12 NM from land" : "< 12 NM from land", result.nearest_land_rule_satisfied ? "ok" : "warning")}
-            </div>
-
-            ${renderDisposalAssessment(result)}
-          </div>
-
-          <div class="panel card">
-            <div class="section-heading">
-              <div>
-                <div class="section-title" style="font-size:1.15rem;">Slop rules checklist</div>
-                <div class="section-copy">
-                  Operator checklist for the slop-specific rule set returned by the API.
-                </div>
-              </div>
-            </div>
-
-            ${renderRulesChecklist(result)}
-          </div>
-        </div>
-
-        <div class="panel card">
-          <div class="section-heading">
-            <div>
-              <div class="section-title" style="font-size:1.15rem;">Active oil zones</div>
-              <div class="section-copy">
-                These are the oil-related zones returned for the current position if any apply.
-              </div>
-            </div>
-          </div>
-          ${renderActiveZones(result)}
-        </div>
-      `;
-    }
-
-    function addHistoryRecord(record) {
-      appState.history.unshift(record);
-      appState.history = appState.history.slice(0, 30);
-      localStorage.setItem('marpol_history', JSON.stringify(appState.history));
-      renderHistory();
-    }
-
-    function renderHistory() {
-      const tbody = $("historyBody");
-
-      if (!appState.history.length) {
-        tbody.innerHTML = `
-          <tr>
-            <td colspan="7">
-              <div class="empty-state">
-                No requests yet. Run a zone check or slop check to populate the session history.
-              </div>
-            </td>
-          </tr>
-        `;
-        return;
-      }
-
-      tbody.innerHTML = appState.history.map(item => {
-        const modeClass = /permit|safe/i.test(item.status)
-          ? "ok"
-          : /restricted|not/i.test(item.status)
-            ? "bad"
-            : "warn";
-
-        return `
-          <tr>
-            <td>${escapeHtml(item.time)}</td>
-            <td>${escapeHtml(item.ship_id)}</td>
-            <td>${escapeHtml(item.type)}</td>
-            <td>${escapeHtml(item.coords)}</td>
-            <td>${escapeHtml(item.distance)}</td>
-            <td><span class="history-status ${modeClass}">${escapeHtml(item.status)}</span></td>
-            <td>${escapeHtml(item.summary)}</td>
-          </tr>
-        `;
-      }).join("");
-    }
-
-    function clearHistory() {
-      appState.history = [];
-      localStorage.removeItem('marpol_history');
-      renderHistory();
-    }
-
-    async function runZoneCheck() {
+function setApiPill(mode, text) {
+  const pill = id('apiStatusPill');
+  pill.classList.remove('ok','warn','bad');
+  pill.classList.add(mode);
+  id('apiStatusText').textContent = text;
+}
+
+async function checkHealth() {
+  try {
+    const response = await fetch(`${apiBase()}/health`);
+    if (!response.ok) throw new Error('Health check failed');
+    const data = await response.json();
+    appState.apiStatus = 'ok';
+    setApiPill('ok', data.service + ' — connected');
+  } catch {
+    appState.apiStatus = 'bad';
+    setApiPill('bad', 'API offline or blocked');
+  }
+}
+
+// ─── MAP ────────────────────────────────────────────────────────────────────
+
+function initMap() {
+  appState.map = L.map('map', { zoomControl: true, attributionControl: true })
+    .setView(appState.initialMap.center, appState.initialMap.zoom);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18, attribution: '© OpenStreetMap contributors'
+  }).addTo(appState.map);
+  appState.shipMarker = L.marker(appState.initialMap.center).addTo(appState.map);
+  appState.shipMarker.bindPopup('Ship position');
+  appState.shipCircle = L.circle(appState.initialMap.center, {
+    radius: 12000, color: '#3d7cff', fillColor: '#3d7cff', fillOpacity: 0.15, weight: 1.5
+  }).addTo(appState.map);
+}
+
+// Blue marker — valid sea position
+function updateShipMarker(lat, lon, label = 'Ship position') {
+  if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
+  const coords = [Number(lat), Number(lon)];
+  appState.shipMarker.setIcon(new L.Icon.Default());       // reset to blue pin
+  appState.shipMarker.setLatLng(coords);
+  appState.shipMarker.bindPopup(label);
+  appState.shipCircle.setLatLng(coords);
+  appState.shipCircle.setStyle({ color: '#3d7cff', fillColor: '#3d7cff' });
+  appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 5), { animate: true, duration: 0.8 });
+}
+
+// Red marker — on-land invalid position  ← FIX: this is now actually called
+function updateShipMarkerLand(lat, lon, shipId) {
+  if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
+  const coords = [Number(lat), Number(lon)];
+  const redIcon = L.divIcon({
+    className: '',
+    html: `<div style="width:28px;height:28px;border-radius:50%;background:#ff5d6c;
+           border:3px solid #fff;box-shadow:0 2px 10px rgba(255,93,108,.6);
+           display:grid;place-items:center;font-size:14px;line-height:1;">⛔</div>`,
+    iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -16],
+  });
+  appState.shipMarker.setLatLng(coords);
+  appState.shipMarker.setIcon(redIcon);
+  appState.shipMarker.bindPopup(
+    `<b style="color:#ff5d6c">⛔ On land</b><br>${escapeHtml(shipId)}<br><small>${lat}, ${lon}</small>`
+  ).openPopup();
+  appState.shipCircle.setLatLng(coords);
+  appState.shipCircle.setStyle({ color: '#ff5d6c', fillColor: '#ff5d6c' });
+  appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 7), { animate: true, duration: 0.8 });
+}
+
+function resetMapView() {
+  if (!appState.map) return;
+  appState.map.setView(appState.initialMap.center, appState.initialMap.zoom);
+}
+function syncMapFromZone() {
+  const lat = parseFloat(id('zlat').value), lon = parseFloat(id('zlon').value);
+  if (!Number.isNaN(lat) && !Number.isNaN(lon)) updateShipMarker(lat, lon, `Zone check position<br>${lat}, ${lon}`);
+}
+function syncMapFromSlop() {
+  const lat = parseFloat(id('slat').value), lon = parseFloat(id('slon').value);
+  if (!Number.isNaN(lat) && !Number.isNaN(lon)) updateShipMarker(lat, lon, `Slop check position<br>${lat}, ${lon}`);
+}
+
+// ─── NORMALIZERS ─────────────────────────────────────────────────────────────
+
+function normalizeZoneResponse(data) {
+  const activeZones = safeArray(data.active_zones);
+  let rulesChecklist = safeArray(data.rules_checklist);
+  let disposalAssessment = safeArray(data.disposal_assessment);
+  let annexSummary = safeArray(data.annex_summary);
+
+  if (!rulesChecklist.length && data.discharge_checklist && typeof data.discharge_checklist === 'object') {
+    disposalAssessment = Object.entries(data.discharge_checklist).map(([key, value]) => {
+      const allowed = Boolean(value?.allowed ?? value);
+      return { code: key, label: key, allowed, reason: value?.note || (allowed ? 'Allowed' : 'Restricted') };
+    });
+  }
+  if (!rulesChecklist.length) {
+    rulesChecklist = [
+      { rule_code: 'DISTANCE_12NM', rule_name: 'Distance from nearest land ≥ 12 NM', passed: Boolean(data.distance_to_nearest_land_nm > 12), actual_value: `${formatNum(data.distance_to_nearest_land_nm, 2)} NM`, required_value: '12.00 NM', note: 'Derived frontend fallback.' },
+      { rule_code: 'SPECIAL_AREA', rule_name: 'Outside MARPOL special area', passed: !Boolean(data.in_special_area) && data.zone_status !== 'RESTRICTED', actual_value: data.zone_status || 'Unknown', required_value: 'SAFE', note: 'Derived frontend fallback.' },
+    ];
+  }
+  if (!disposalAssessment.length) {
+    disposalAssessment = [{ code: 'generic', label: 'Operational disposal view', allowed: data.zone_status !== 'RESTRICTED' && Number(data.distance_to_nearest_land_nm) > 12, reason: data.summary || 'Derived from legacy response.' }];
+  }
+  if (!annexSummary.length && activeZones.length) {
+    const grouped = {};
+    activeZones.forEach(zone => {
+      const annex = zone.annex || 'Unknown';
+      if (!grouped[annex]) grouped[annex] = { annex, active_zone_count: 0, waste_types: [] };
+      grouped[annex].active_zone_count++;
+      if (zone.waste_type && !grouped[annex].waste_types.includes(zone.waste_type)) grouped[annex].waste_types.push(zone.waste_type);
+    });
+    annexSummary = Object.values(grouped);
+  }
+
+  return {
+    ship_id: data.ship_id || id('zship').value,
+    evaluation_type: data.evaluation_type || 'zone_check',
+    latitude: Number(data.latitude ?? id('zlat').value),
+    longitude: Number(data.longitude ?? id('zlon').value),
+    distance_to_nearest_land_nm: Number(data.distance_to_nearest_land_nm ?? 0),
+    nearest_land_rule_satisfied: typeof data.nearest_land_rule_satisfied === 'boolean' ? data.nearest_land_rule_satisfied : Number(data.distance_to_nearest_land_nm ?? 0) > 12,
+    in_special_area: typeof data.in_special_area === 'boolean' ? data.in_special_area : (data.zone_status === 'RESTRICTED' || activeZones.length > 0),
+    zone_status: data.zone_status || (activeZones.length ? 'RESTRICTED' : 'SAFE'),
+    active_zones: activeZones,
+    annex_summary: annexSummary,
+    disposal_assessment: disposalAssessment,
+    rules_checklist: rulesChecklist,
+    summary: data.summary || 'No summary returned by API.',
+    metadata: data.metadata || {},
+  };
+}
+
+function normalizeSlopResponse(data) {
+  const normalized = normalizeZoneResponse(data);
+  let rulesChecklist = safeArray(data.rules_checklist);
+  if (!rulesChecklist.length && safeArray(data.checklist).length) {
+    rulesChecklist = data.checklist.map((item, index) => ({
+      rule_code: item.rule_code || `RULE${index + 1}`,
+      rule_name: item.rule || item.rule_name || `Rule ${index + 1}`,
+      passed: Boolean(item.passed),
+      actual_value: item.actual_value || '',
+      required_value: item.required_value || '',
+      note: item.note || '',
+    }));
+  }
+  if (!rulesChecklist.length) rulesChecklist = normalized.rules_checklist;
+
+  let disposalAssessment = safeArray(data.disposal_assessment);
+  if (!disposalAssessment.length) {
+    const permitted = typeof data.slop_discharge_allowed === 'boolean' ? data.slop_discharge_allowed : rulesChecklist.every(r => Boolean(r.passed));
+    disposalAssessment = [{ code: 'slop', label: 'Slop / Oil-mixed water', allowed: permitted, reason: data.reason || data.summary || 'Derived from slop response.' }];
+  }
+
+  const summary = data.summary || data.reason || normalized.summary;
+  const status = data.overall_status || (disposalAssessment[0]?.allowed ? 'PERMITTED' : 'NOT PERMITTED');
+
+  return { ...normalized, evaluation_type: data.evaluation_type || 'slop_check', rules_checklist: rulesChecklist, disposal_assessment: disposalAssessment, summary, overall_status: status };
+}
+
+// ─── RENDERERS ───────────────────────────────────────────────────────────────
+
+const buildStatusTag = (text, mode) => `<span class="tag ${mode}">${escapeHtml(text)}</span>`;
+
+function renderStatsTop(result, isSlop = false) {
+  const mainStatus = isSlop ? result.overall_status : (result.disposal_assessment[0]?.allowed ? 'PERMITTED' : result.zone_status || 'UNKNOWN');
+  const statusClass = /permit|safe/i.test(mainStatus) ? 'ok' : /restricted|not/i.test(mainStatus) ? 'error' : 'warning';
+  return `<div class="stats-grid">
+    <div class="stat-card"><span class="stat-label">${isSlop ? 'Overall slop status' : 'Zone status'}</span><div class="stat-value">${escapeHtml(mainStatus)}</div><div class="stat-note">${isSlop ? 'Operational result from the slop rule set.' : 'General area safety or restriction status.'}</div></div>
+    <div class="stat-card"><span class="stat-label">Distance to nearest land</span><div class="stat-value">${formatNum(result.distance_to_nearest_land_nm, 2)} NM</div><div class="stat-note">${result.nearest_land_rule_satisfied ? '✅ 12 NM rule satisfied.' : '⚠️ Below the 12 NM threshold.'}</div></div>
+    <div class="stat-card"><span class="stat-label">Active zones</span><div class="stat-value">${safeArray(result.active_zones).length}</div><div class="stat-note">${result.in_special_area ? 'At least one MARPOL zone is active.' : 'No active MARPOL zones returned.'}</div></div>
+    <div class="stat-card"><span class="stat-label">${isSlop ? 'Checklist rules' : 'Disposal items'}</span><div class="stat-value">${isSlop ? safeArray(result.rules_checklist).length : safeArray(result.disposal_assessment).length}</div><div class="stat-note">${isSlop ? 'Rules evaluated for slop discharge.' : 'Operational disposal outcomes presented.'}</div></div>
+  </div>`;
+}
+
+function renderActiveZones(result) {
+  const zones = safeArray(result.active_zones);
+  if (!zones.length) return `<div class="empty-state">No active MARPOL zones were returned for the current coordinates.</div>`;
+  const tags = zones.map(z => `<span class="tag zone">${escapeHtml(z.annex ? `Annex ${z.annex}` : z.zone_name || 'Unnamed zone')}</span>`).join('');
+  const items = zones.map(z => `<div class="list-item"><div class="list-icon no">!</div><div><div class="list-item-title">${escapeHtml(z.zone_name || z.name || 'Unnamed MARPOL zone')}</div><div class="list-item-subtitle">${escapeHtml(z.restriction || 'Restriction not available.')}</div></div><div class="list-item-meta"><div><strong>Annex</strong> ${escapeHtml(z.annex)}</div><div><strong>Waste</strong> ${escapeHtml(z.waste_type || z.type)}</div><div><strong>ID</strong> ${escapeHtml(z.zone_id)}</div></div></div>`).join('');
+  return `<div class="tags-wrap">${tags}</div><div class="list-wrap">${items}</div>`;
+}
+
+function renderAnnexSummary(result) {
+  const annexes = safeArray(result.annex_summary);
+  if (!annexes.length) return `<div class="empty-state">Annex summary is empty. This usually means no active zones were found.</div>`;
+  return `<div class="list-wrap">${annexes.map(item => `<div class="list-item"><div class="list-icon ok">A</div><div><div class="list-item-title">Annex ${escapeHtml(item.annex)}</div><div class="list-item-subtitle">Waste types: ${escapeHtml(safeArray(item.waste_types).join(', '))}</div></div><div class="list-item-meta"><div><strong>Zones</strong> ${escapeHtml(item.active_zone_count ?? 0)}</div></div></div>`).join('')}</div>`;
+}
+
+function renderDisposalAssessment(result) {
+  const items = safeArray(result.disposal_assessment);
+  if (!items.length) return `<div class="empty-state">No disposal assessment items were returned.</div>`;
+  return `<div class="list-wrap">${items.map(item => `<div class="list-item"><div class="list-icon ${item.allowed ? 'ok' : 'no'}">${item.allowed ? '✓' : '✗'}</div><div><div class="list-item-title">${escapeHtml(item.label || item.code || 'Assessment item')}</div><div class="list-item-subtitle">${escapeHtml(item.reason || 'No explanation returned.')}</div></div><div class="list-item-meta">${item.allowed ? `<span class="tag ok">Allowed</span>` : `<span class="tag error">Restricted</span>`}</div></div>`).join('')}</div>`;
+}
+
+function renderRulesChecklist(result) {
+  const rules = safeArray(result.rules_checklist);
+  if (!rules.length) return `<div class="empty-state">No rules checklist was returned.</div>`;
+  return `<div class="list-wrap">${rules.map(rule => `<div class="list-item"><div class="list-icon ${rule.passed ? 'ok' : 'no'}">${rule.passed ? '✓' : '✗'}</div><div><div class="list-item-title">${escapeHtml(rule.rule_name || rule.rule_code || 'Rule')}</div><div class="list-item-subtitle">${escapeHtml(rule.note || 'No note returned.')}</div></div><div class="list-item-meta"><div><strong>Actual</strong> ${escapeHtml(rule.actual_value)}</div><div><strong>Required</strong> ${escapeHtml(rule.required_value)}</div></div></div>`).join('')}</div>`;
+}
+
+function renderZoneResults(result) {
+  const bannerClass = (result.zone_status === 'SAFE' && result.nearest_land_rule_satisfied) ? 'info-banner banner-good' : 'info-banner banner-bad';
+  id('zoneResults').innerHTML = `
+    ${renderStatsTop(result, false)}
+    <div class="${bannerClass}">${escapeHtml(result.summary)}</div>
+    <div class="panel-grid">
+      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Active MARPOL zones</div></div></div>${renderActiveZones(result)}</div>
+      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Annex summary</div></div></div>${renderAnnexSummary(result)}</div>
+    </div>
+    <div class="panel-grid">
+      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Disposal assessment</div></div></div>${renderDisposalAssessment(result)}</div>
+      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Rules checklist</div></div></div>${renderRulesChecklist(result)}</div>
+    </div>`;
+}
+
+function renderSlopResults(result) {
+  const isAllowed = safeArray(result.disposal_assessment)[0]?.allowed || /permit/i.test(result.overall_status);
+  const bannerClass = isAllowed ? 'info-banner banner-good' : 'info-banner banner-bad';
+  id('slopResults').innerHTML = `
+    ${renderStatsTop(result, true)}
+    <div class="${bannerClass}">${escapeHtml(result.summary)}</div>
+    <div class="subgrid">
+      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Slop decision</div></div></div>
+        <div class="tags-wrap">${buildStatusTag(isAllowed ? 'PERMITTED' : 'NOT PERMITTED', isAllowed ? 'ok' : 'error')}${buildStatusTag(result.in_special_area ? 'In special area' : 'Outside special area', result.in_special_area ? 'error' : 'ok')}${buildStatusTag(result.nearest_land_rule_satisfied ? '≥12 NM from land' : '<12 NM from land', result.nearest_land_rule_satisfied ? 'ok' : 'warning')}</div>
+        ${renderDisposalAssessment(result)}</div>
+      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Slop rules checklist</div></div></div>${renderRulesChecklist(result)}</div>
+    </div>
+    <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Active oil zones</div></div></div>${renderActiveZones(result)}</div>`;
+}
+
+// ─── HISTORY ─────────────────────────────────────────────────────────────────
+
+function addHistoryRecord(record) {
+  appState.history.unshift(record);
+  appState.history = appState.history.slice(0, 30);
+  localStorage.setItem('marpol_history', JSON.stringify(appState.history));
+  renderHistory();
+}
+
+function renderHistory() {
+  const tbody = id('historyBody');
+  if (!appState.history.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No requests yet. Run a zone check or slop check to populate the session history.</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = appState.history.map(item => {
+    const modeClass = /permit|safe/i.test(item.status) ? 'ok' : /restricted|not/i.test(item.status) ? 'bad' : 'warn';
+    return `<tr>
+      <td>${escapeHtml(item.time)}</td>
+      <td>${escapeHtml(item.ship_id)}</td>
+      <td>${escapeHtml(item.type)}</td>
+      <td>${escapeHtml(item.coords)}</td>
+      <td>${escapeHtml(formatNum(item.distance, 2))} NM</td>
+      <td><span class="history-status ${modeClass}">${escapeHtml(item.status)}</span></td>
+      <td>${escapeHtml(item.summary)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function clearHistory() { appState.history = []; localStorage.removeItem('marpol_history'); renderHistory(); }
+
+// ─── ZONE CHECK ──────────────────────────────────────────────────────────────
+
+async function runZoneCheck() {
   const lat = parseFloat($("z_lat").value);
   const lon = parseFloat($("z_lon").value);
   const shipId = $("z_ship").value.trim() || "SHIP_101";
@@ -2299,9 +1912,9 @@
   }
 }
 
+// ─── SLOP CHECK ──────────────────────────────────────────────────────────────
 
-
-    async function runSlopCheck() {
+async function runSlopCheck() {
   const lat = parseFloat($("s_lat").value);
   const lon = parseFloat($("s_lon").value);
   const shipId = $("s_ship").value.trim() || "SHIP_101";
@@ -2389,22 +2002,19 @@
   }
 }
 
+// ─── INIT ─────────────────────────────────────────────────────────────────────
 
+function preloadExamples() { renderHistory(); syncMapFromZone(); }
 
-    function preloadExamples() {
-      renderHistory();
-      syncMapFromZone();
-    }
+function init() {
+  setTheme(appState.currentTheme);
+  initMap();
+  preloadExamples();
+  checkHealth();
+  setInterval(checkHealth, 10000);
+}
 
-    function init() {
-      setTheme(appState.currentTheme);
-      initMap();
-      preloadExamples();
-      checkHealth();
-      setInterval(checkHealth, 10000);
-    }
-
-    window.addEventListener("DOMContentLoaded", init);
-  </script>
+window.addEventListener('DOMContentLoaded', init);
+</script>
 </body>
 </html>
