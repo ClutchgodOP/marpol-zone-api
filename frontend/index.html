@@ -1611,7 +1611,7 @@ function updateShipMarker(lat, lon, label = 'Ship position') {
   appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 5), { animate: true, duration: 0.8 });
 }
 
-// Red marker — on-land invalid position  ← FIX: this is now actually called
+// Red marker — on-land invalid position
 function updateShipMarkerLand(lat, lon, shipId) {
   if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
   const coords = [Number(lat), Number(lon)];
@@ -1636,10 +1636,12 @@ function resetMapView() {
   if (!appState.map) return;
   appState.map.setView(appState.initialMap.center, appState.initialMap.zoom);
 }
+
 function syncMapFromZone() {
   const lat = parseFloat(id('z_lat').value), lon = parseFloat(id('z_lon').value);
   if (!Number.isNaN(lat) && !Number.isNaN(lon)) updateShipMarker(lat, lon, `Zone check position<br>${lat}, ${lon}`);
 }
+
 function syncMapFromSlop() {
   const lat = parseFloat(id('s_lat').value), lon = parseFloat(id('s_lon').value);
   if (!Number.isNaN(lat) && !Number.isNaN(lon)) updateShipMarker(lat, lon, `Slop check position<br>${lat}, ${lon}`);
@@ -1680,10 +1682,10 @@ function normalizeZoneResponse(data) {
   }
 
   return {
-    ship_id: data.ship_id || id('zship').value,
+    ship_id: data.ship_id || id('z_ship').value,
     evaluation_type: data.evaluation_type || 'zone_check',
-    latitude: Number(data.latitude ?? id('zlat').value),
-    longitude: Number(data.longitude ?? id('zlon').value),
+    latitude: Number(data.latitude ?? id('z_lat').value),
+    longitude: Number(data.longitude ?? id('z_lon').value),
     distance_to_nearest_land_nm: Number(data.distance_to_nearest_land_nm ?? 0),
     nearest_land_rule_satisfied: typeof data.nearest_land_rule_satisfied === 'boolean' ? data.nearest_land_rule_satisfied : Number(data.distance_to_nearest_land_nm ?? 0) > 12,
     in_special_area: typeof data.in_special_area === 'boolean' ? data.in_special_area : (data.zone_status === 'RESTRICTED' || activeZones.length > 0),
