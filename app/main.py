@@ -23,8 +23,7 @@ origins = [
     "http://localhost:5500",
     "http://127.0.0.1:8000",
     "http://localhost:8000",
-    "https://marpol-zone-api.onrender.com",
-    "https://volteomaritime-marpol-zone-api.up.railway.app",  # fixed: comma was missing
+    "https://volteo-maritime-marpol-zone-api.up.railway.app",
     "https://volteo-maritime-dashboard.vercel.app",
     "null",
 ]
