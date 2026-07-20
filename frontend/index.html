@@ -1856,17 +1856,18 @@ async function runZoneCheck() {
     });
 
     if (!response.ok) {
-      // ✅ Parse JSON instead of throw — so we can handle 400 without skipping map
       const errData = await response.json().catch(() => ({}));
       const detail = errData?.detail;
-      const msg = detail?.message || (typeof detail === "string" ? detail : `HTTP ${response.status}`);
+      const msg = typeof detail === "string" ? detail : (detail?.message || `HTTP ${response.status}`);
 
-      if (response.status === 400 && detail?.error === "INVALID_POSITION") {
-        // Map already moved above — just update popup + turn circle red
-        if (appState.shipMarker) appState.shipMarker.bindPopup(
-          `<b style="color:#ff5d6c">⛔ On land</b><br>${escapeHtml(shipId)}<br><small>${lat}, ${lon}</small>`
-        ).openPopup();
-        if (appState.shipCircle) appState.shipCircle.setStyle({ color: "#ff5d6c", fillColor: "#ff5d6c" });
+      // Check for the land error whether it's a structured object or a simple FastAPI string
+      const isLandError = response.status === 400 && 
+        (detail?.error === "INVALID_POSITION" || msg.toLowerCase().includes("land"));
+
+      if (isLandError) {
+        // Call your custom red marker function!
+        updateShipMarkerLand(lat, lon, shipId);
+        
         $("zoneResults").innerHTML = `
           <div class="info-banner banner-bad">
             <strong>⛔ Position is on land</strong><br>
@@ -1951,13 +1952,14 @@ async function runSlopCheck() {
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
       const detail = errData?.detail;
-      const msg = detail?.message || (typeof detail === "string" ? detail : `HTTP ${response.status}`);
+      const msg = typeof detail === "string" ? detail : (detail?.message || `HTTP ${response.status}`);
 
-      if (response.status === 400 && detail?.error === "INVALID_POSITION") {
-        if (appState.shipMarker) appState.shipMarker.bindPopup(
-          `<b style="color:#ff5d6c">⛔ On land</b><br>${escapeHtml(shipId)}<br><small>${lat}, ${lon}</small>`
-        ).openPopup();
-        if (appState.shipCircle) appState.shipCircle.setStyle({ color: "#ff5d6c", fillColor: "#ff5d6c" });
+      const isLandError = response.status === 400 && 
+        (detail?.error === "INVALID_POSITION" || msg.toLowerCase().includes("land"));
+
+      if (isLandError) {
+        updateShipMarkerLand(lat, lon, shipId);
+        
         $("slopResults").innerHTML = `
           <div class="info-banner banner-bad">
             <strong>⛔ Position is on land</strong><br>
