@@ -23,7 +23,7 @@ origins = [
     "http://localhost:5500",
     "http://127.0.0.1:8000",
     "http://localhost:8000",
-    "https://volteo-maritime-marpol-zone-api.up.railway.app",
+    "https://volteo-maritime-marpol-zone-api.up.railway.app/docs",
     "https://volteo-maritime-dashboard-deploy.vercel.app",
     "null",
 ]
