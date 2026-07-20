@@ -1536,7 +1536,7 @@
 
   <script>
     const appState = {
-      history: [],
+      history: JSON.parse(localStorage.getItem('marpol_history')) || [],
       map: null,
       shipMarker: null,
       shipCircle: null,
@@ -2168,6 +2168,7 @@
     function addHistoryRecord(record) {
       appState.history.unshift(record);
       appState.history = appState.history.slice(0, 30);
+      localStorage.setItem('marpol_history', JSON.stringify(appState.history));
       renderHistory();
     }
 
@@ -2210,6 +2211,7 @@
 
     function clearHistory() {
       appState.history = [];
+      localStorage.removeItem('marpol_history');
       renderHistory();
     }
 
