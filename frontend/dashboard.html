@@ -1856,29 +1856,35 @@ async function runZoneCheck() {
     });
 
     if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      const detail = errData?.detail;
-      const msg = typeof detail === "string" ? detail : (detail?.message || `HTTP ${response.status}`);
+  const errData = await response.json().catch(() => ({}));
+  const detail = errData?.detail;
+  const msg =
+    typeof detail === "string"
+      ? detail
+      : (detail?.message || errData?.message || `HTTP ${response.status}`);
 
-      // Check for the land error whether it's a structured object or a simple FastAPI string
-      const isLandError = response.status === 400 && 
-        (detail?.error === "INVALID_POSITION" || msg.toLowerCase().includes("land"));
+  const isLandError =
+    response.status === 400 &&
+    (
+      detail?.error === "INVALID_POSITION" ||
+      detail?.code === "INVALID_POSITION" ||
+      String(msg).toLowerCase().includes("land") ||
+      String(msg).toLowerCase().includes("invalid position")
+    );
 
-      if (isLandError) {
-        // Call your custom red marker function!
-        updateShipMarkerLand(lat, lon, shipId);
-        
-        $("zoneResults").innerHTML = `
-          <div class="info-banner banner-bad">
-            <strong>⛔ Position is on land</strong><br>
-            Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
-            A vessel cannot be positioned on land. Please enter valid sea coordinates.
-          </div>`;
-      } else {
-        $("zoneResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
-      }
-      return;
-    }
+  if (isLandError) {
+    updateShipMarkerLand(lat, lon, shipId);
+    $("zoneResults").innerHTML = `
+      <div class="info-banner banner-bad">
+        <strong>⛔ Position is on land</strong><br>
+        Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
+        A vessel cannot be positioned on land. Please enter valid sea coordinates.
+      </div>`;
+  } else {
+    $("zoneResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
+  }
+  return;
+}
 
     const data = await response.json();
     const result = normalizeZoneResponse(data);
@@ -1950,27 +1956,35 @@ async function runSlopCheck() {
     });
 
     if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      const detail = errData?.detail;
-      const msg = typeof detail === "string" ? detail : (detail?.message || `HTTP ${response.status}`);
+  const errData = await response.json().catch(() => ({}));
+  const detail = errData?.detail;
+  const msg =
+    typeof detail === "string"
+      ? detail
+      : (detail?.message || errData?.message || `HTTP ${response.status}`);
 
-      const isLandError = response.status === 400 && 
-        (detail?.error === "INVALID_POSITION" || msg.toLowerCase().includes("land"));
+  const isLandError =
+    response.status === 400 &&
+    (
+      detail?.error === "INVALID_POSITION" ||
+      detail?.code === "INVALID_POSITION" ||
+      String(msg).toLowerCase().includes("land") ||
+      String(msg).toLowerCase().includes("invalid position")
+    );
 
-      if (isLandError) {
-        updateShipMarkerLand(lat, lon, shipId);
-        
-        $("slopResults").innerHTML = `
-          <div class="info-banner banner-bad">
-            <strong>⛔ Position is on land</strong><br>
-            Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
-            A vessel cannot be positioned on land. Please enter valid sea coordinates.
-          </div>`;
-      } else {
-        $("slopResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
-      }
-      return;
-    }
+  if (isLandError) {
+    updateShipMarkerLand(lat, lon, shipId);
+    $("zoneResults").innerHTML = `
+      <div class="info-banner banner-bad">
+        <strong>⛔ Position is on land</strong><br>
+        Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
+        A vessel cannot be positioned on land. Please enter valid sea coordinates.
+      </div>`;
+  } else {
+    $("zoneResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
+  }
+  return;
+}
 
     const data = await response.json();
     const result = normalizeSlopResponse(data);
