@@ -2607,12 +2607,14 @@
 
     function init() {
       setTheme(appState.currentTheme);
-      initMap();
-      initRouteMap();
-      preloadExamples();
       checkHealth();
       setInterval(checkHealth, 10000);
+
+      try { initMap(); } catch (e) { console.error('initMap failed', e); }
+      try { initRouteMap(); } catch (e) { console.error('initRouteMap failed', e); }
+      try { preloadExamples(); } catch (e) { console.error('preloadExamples failed', e); }
     }
+
 
     window.addEventListener('DOMContentLoaded', init);
   </script>
