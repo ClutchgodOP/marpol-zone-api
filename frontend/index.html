@@ -1880,6 +1880,15 @@ async function runZoneCheck() {
             Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
             A vessel cannot be positioned on land. Please enter valid sea coordinates.
           </div>`;
+        addHistoryRecord({
+          time: new Date().toLocaleTimeString(),
+          shipid: shipId,
+          type: "Zone check",
+          coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
+          distance: 0,
+          status: "ON LAND",
+          summary: "Rejected — coordinates fall on land."
+      });
       } else {
         id("zoneResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
       }
@@ -1980,6 +1989,15 @@ async function runSlopCheck() {
             Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
             A vessel cannot be positioned on land. Please enter valid sea coordinates.
           </div>`;
+        addHistoryRecord({
+          time: new Date().toLocaleTimeString(),
+          shipid: shipId,
+          type: "Slop check",
+          coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
+          distance: 0,
+          status: "ON LAND",
+          summary: "Rejected — coordinates fall on land."
+      });
       } else {
         id("slopResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
       }
