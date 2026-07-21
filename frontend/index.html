@@ -1882,7 +1882,7 @@ async function runZoneCheck() {
           </div>`;
         addHistoryRecord({
           time: new Date().toLocaleTimeString(),
-          ship_id: result.ship_id,
+          shipid: shipId,
           type: "Zone check",
           coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
           distance: 0,
@@ -1991,7 +1991,7 @@ async function runSlopCheck() {
           </div>`;
         addHistoryRecord({
           time: new Date().toLocaleTimeString(),
-          ship_id: result.ship_id,
+          ship_id: shipId,
           type: "Slop check",
           coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
           distance: 0,
