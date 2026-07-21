@@ -729,7 +729,8 @@
       border-color: var(--border-strong);
     }
 
-    #map {
+    #map,
+    #routeMap {
       width: 100%;
       min-height: 600px;
       border-radius: 22px;
@@ -1112,7 +1113,8 @@
         min-width: 0;
       }
 
-      #map {
+      #map,
+      #routeMap {
         min-height: 420px;
       }
 
@@ -1129,19 +1131,9 @@
       <div class="brand">
         <div class="brand-mark-wrap" aria-hidden="true">
           <svg width="38" height="38" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <polygon
-              points="18,24 56,24 94,60 74,80"
-              fill="#A8D8CA"
-            ></polygon>
-            <polygon
-              points="18,96 56,96 74,80 56,60"
-              fill="#5FC8A6"
-            ></polygon>
-            <polygon
-              points="56,60 74,80 80,74 62,54"
-              fill="#4DBA98"
-              opacity="0.82"
-            ></polygon>
+            <polygon points="18,24 56,24 94,60 74,80" fill="#A8D8CA"></polygon>
+            <polygon points="18,96 56,96 74,80 56,60" fill="#5FC8A6"></polygon>
+            <polygon points="56,60 74,80 80,74 62,54" fill="#4DBA98" opacity="0.82"></polygon>
           </svg>
         </div>
 
@@ -1162,6 +1154,11 @@
         <button class="nav-btn" data-tab-btn="slop" onclick="showTab('slop', this)">
           <span class="nav-icon">🛢️</span>
           <span>Slop compliance</span>
+        </button>
+
+        <button class="nav-btn" data-tab-btn="route" onclick="showTab('route', this)">
+          <span class="nav-icon">🧭</span>
+          <span>Route validation</span>
         </button>
 
         <button class="nav-btn" data-tab-btn="history" onclick="showTab('history', this)">
@@ -1487,6 +1484,91 @@
         <div id="slopResults" class="result-stack"></div>
       </section>
 
+      <!-- ROUTE TAB -->
+      <section id="tab-route" class="fade-in hidden">
+        <div class="grid-main">
+          <div class="panel card">
+            <div class="section-heading">
+              <div>
+                <div class="section-title">Route/course validation</div>
+                <div class="section-copy">
+                  Checks whether the ship's current coordinates lie on the route between
+                  an origin and destination port. Use this to reject invalid positions
+                  that fall far away from the intended course, such as inland coordinates
+                  or sea coordinates in the wrong region.
+                </div>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="r_ship">Ship ID</label>
+                <input id="r_ship" class="control" value="SHIP_101" />
+              </div>
+
+              <div class="form-group">
+                <label for="r_origin_port">Origin port (name or code)</label>
+                <input id="r_origin_port" class="control" value="VISAKHAPATNAM" />
+              </div>
+
+              <div class="form-group">
+                <label for="r_dest_port">Destination port (name or code)</label>
+                <input id="r_dest_port" class="control" value="SINGAPORE" />
+              </div>
+
+              <div class="form-group">
+                <label for="r_corridor">Corridor width (NM)</label>
+                <input id="r_corridor" class="control" type="number" value="25" step="1" min="1" max="500" />
+              </div>
+
+              <div class="form-group">
+                <label for="r_lat">Ship latitude</label>
+                <input id="r_lat" class="control" type="number" value="9.6278" step="0.0001" min="-90" max="90" />
+              </div>
+
+              <div class="form-group">
+                <label for="r_lon">Ship longitude</label>
+                <input id="r_lon" class="control" type="number" value="93.7700" step="0.0001" min="-180" max="180" />
+              </div>
+            </div>
+
+            <div class="button-row">
+              <button class="btn primary" onclick="runRouteCheck()">Run route check</button>
+              <button class="btn secondary" onclick="syncMapFromRoute()">Center map to inputs</button>
+              <div class="spinner" id="routeSpinner"></div>
+            </div>
+
+            <div class="inline-help">
+              Example: if a vessel is travelling from Visakhapatnam to Singapore,
+              then coordinates near that route should be valid, while coordinates
+              like Delhi or Hyderabad should be rejected as off-route.
+            </div>
+          </div>
+
+          <div class="panel map-card">
+            <div class="map-header">
+              <div>
+                <div class="section-title" style="font-size:1.1rem;">Route validation map</div>
+                <div class="map-meta">
+                  Displays origin, destination, planned route line, and the ship's
+                  reported position so operators can visually confirm whether the vessel
+                  is on the intended course.
+                </div>
+              </div>
+
+              <div class="map-toolbar">
+                <button class="mini-btn" onclick="syncMapFromRoute()">Use route coordinates</button>
+                <button class="mini-btn" onclick="resetRouteMapView()">Reset route view</button>
+              </div>
+            </div>
+
+            <div id="routeMap"></div>
+          </div>
+        </div>
+
+        <div id="routeResults" class="result-stack"></div>
+      </section>
+
       <!-- HISTORY TAB -->
       <section id="tab-history" class="fade-in hidden">
         <div class="panel card">
@@ -1494,7 +1576,7 @@
             <div>
               <div class="section-title">Request history</div>
               <div class="section-copy">
-                Stores local session history for zone and slop checks so you can compare recent evaluations.
+                Stores local session history for zone, slop, and route checks so you can compare recent evaluations.
               </div>
             </div>
 
@@ -1511,7 +1593,7 @@
                   <th>Ship ID</th>
                   <th>Type</th>
                   <th>Coordinates</th>
-                  <th>Distance to land</th>
+                  <th>Distance</th>
                   <th>Status</th>
                   <th>Summary</th>
                 </tr>
@@ -1520,7 +1602,7 @@
                 <tr>
                   <td colspan="7">
                     <div class="empty-state">
-                      No requests yet. Run a zone check or slop check to populate the session history.
+                      No requests yet. Run a zone check, slop check, or route check to populate the session history.
                     </div>
                   </td>
                 </tr>
@@ -1533,522 +1615,1006 @@
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
-<script>
-const appState = {
-  history: JSON.parse(localStorage.getItem('marpol_history')) || [], map: null, shipMarker: null, shipCircle: null,
-  apiStatus: 'checking', lastZoneResult: null, lastSlopResult: null,
-  currentTheme: document.documentElement.getAttribute('data-theme') || 'dark',
-  initialMap: { center: [20, 0], zoom: 2 }
-};
+  <script>
+    const appState = {
+      history: JSON.parse(localStorage.getItem('marpol_history')) || [],
+      map: null,
+      shipMarker: null,
+      shipCircle: null,
+      routeMap: null,
+      routeOriginMarker: null,
+      routeDestMarker: null,
+      routeShipMarker: null,
+      routeLine: null,
+      apiStatus: 'checking',
+      lastZoneResult: null,
+      lastSlopResult: null,
+      lastRouteResult: null,
+      currentTheme: document.documentElement.getAttribute('data-theme') || 'dark',
+      initialMap: { center: [20, 0], zoom: 2 }
+    };
 
-const id = i => document.getElementById(i);
-const apiBase = () => id('apiBase').value.trim().replace(/\/$/, '');
-const formatNum = (value, digits = 2) => (value == null || Number.isNaN(Number(value))) ? '—' : Number(value).toFixed(digits);
-const escapeHtml = value => { const d = document.createElement('div'); d.textContent = value == null ? String(value) : value; return d.innerHTML; };
-const safeArray = value => Array.isArray(value) ? value : [];
+    const id = i => document.getElementById(i);
+    const apiBase = () => id('apiBase').value.trim().replace(/\/$/, '');
+    const formatNum = (value, digits = 2) => (value == null || Number.isNaN(Number(value))) ? '—' : Number(value).toFixed(digits);
+    const escapeHtml = value => {
+      const d = document.createElement('div');
+      d.textContent = value == null ? String(value) : value;
+      return d.innerHTML;
+    };
+    const safeArray = value => Array.isArray(value) ? value : [];
 
-function setTheme(theme) {
-  appState.currentTheme = theme;
-  document.documentElement.setAttribute('data-theme', theme);
-  id('themeIcon').textContent = theme === 'dark' ? '☀️' : '🌙';
-  id('themeLabel').textContent = theme === 'dark' ? 'Switch theme' : 'Switch theme';
-}
-function toggleTheme() { setTheme(appState.currentTheme === 'dark' ? 'light' : 'dark'); }
+    function setTheme(theme) {
+      appState.currentTheme = theme;
+      document.documentElement.setAttribute('data-theme', theme);
+      id('themeIcon').textContent = theme === 'dark' ? '☀️' : '🌙';
+      id('themeLabel').textContent = 'Switch theme';
+    }
 
-function showTab(tabName, btn) {
-  ['zone','slop','history'].forEach(name => {
-    const section = id(`tab-${name}`);
-    const navBtn = document.querySelector(`[data-tab-btn="${name}"]`);
-    if (section) section.classList.toggle('hidden', name !== tabName);
-    if (navBtn) navBtn.classList.toggle('active', name === tabName);
-  });
-}
+    function toggleTheme() {
+      setTheme(appState.currentTheme === 'dark' ? 'light' : 'dark');
+    }
 
-function setApiPill(mode, text) {
-  const pill = id('apiStatusPill');
-  pill.classList.remove('ok','warn','bad');
-  pill.classList.add(mode);
-  id('apiStatusText').textContent = text;
-}
+    function showTab(tabName) {
+      ['zone', 'slop', 'route', 'history'].forEach(name => {
+        const section = id(`tab-${name}`);
+        const navBtn = document.querySelector(`[data-tab-btn="${name}"]`);
+        if (section) section.classList.toggle('hidden', name !== tabName);
+        if (navBtn) navBtn.classList.toggle('active', name === tabName);
+      });
 
-async function checkHealth() {
-  try {
-    const response = await fetch(`${apiBase()}/health`);
-    if (!response.ok) throw new Error('Health check failed');
-    const data = await response.json();
-    appState.apiStatus = 'ok';
-    setApiPill('ok', data.service + ' — connected');
-  } catch {
-    appState.apiStatus = 'bad';
-    setApiPill('bad', 'API offline or blocked');
-  }
-}
+      if (tabName === 'route' && appState.routeMap) {
+        setTimeout(() => appState.routeMap.invalidateSize(), 120);
+      }
+      if ((tabName === 'zone' || tabName === 'slop') && appState.map) {
+        setTimeout(() => appState.map.invalidateSize(), 120);
+      }
+    }
 
-// ─── MAP ────────────────────────────────────────────────────────────────────
+    function setApiPill(mode, text) {
+      const pill = id('apiStatusPill');
+      pill.classList.remove('ok', 'warn', 'bad');
+      pill.classList.add(mode);
+      id('apiStatusText').textContent = text;
+    }
 
-function initMap() {
-  appState.map = L.map('map', { zoomControl: true, attributionControl: true })
-    .setView(appState.initialMap.center, appState.initialMap.zoom);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 18, attribution: '© OpenStreetMap contributors'
-  }).addTo(appState.map);
-  appState.shipMarker = L.marker(appState.initialMap.center).addTo(appState.map);
-  appState.shipMarker.bindPopup('Ship position');
-  appState.shipCircle = L.circle(appState.initialMap.center, {
-    radius: 12000, color: '#3d7cff', fillColor: '#3d7cff', fillOpacity: 0.15, weight: 1.5
-  }).addTo(appState.map);
-}
+    async function checkHealth() {
+      try {
+        const response = await fetch(`${apiBase()}/health`);
+        if (!response.ok) throw new Error('Health check failed');
+        const data = await response.json();
+        appState.apiStatus = 'ok';
+        setApiPill('ok', data.service + ' — connected');
+      } catch {
+        appState.apiStatus = 'bad';
+        setApiPill('bad', 'API offline or blocked');
+      }
+    }
 
-// Blue marker — valid sea position
-function updateShipMarker(lat, lon, label = 'Ship position') {
-  if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
-  const coords = [Number(lat), Number(lon)];
-  appState.shipMarker.setIcon(new L.Icon.Default());       // reset to blue pin
-  appState.shipMarker.setLatLng(coords);
-  appState.shipMarker.bindPopup(label);
-  appState.shipCircle.setLatLng(coords);
-  appState.shipCircle.setStyle({ color: '#3d7cff', fillColor: '#3d7cff' });
-  appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 5), { animate: true, duration: 0.8 });
-}
+    // ─── PRIMARY MAP ──────────────────────────────────────────────────────────
 
-// Red marker — on-land invalid position  ← FIX: this is now actually called
-function updateShipMarkerLand(lat, lon, shipId) {
-  if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
-  const coords = [Number(lat), Number(lon)];
-  const redIcon = L.divIcon({
-    className: '',
-    html: `<div style="width:28px;height:28px;border-radius:50%;background:#ff5d6c;
-           border:3px solid #fff;box-shadow:0 2px 10px rgba(255,93,108,.6);
-           display:grid;place-items:center;font-size:14px;line-height:1;">⛔</div>`,
-    iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -16],
-  });
-  appState.shipMarker.setLatLng(coords);
-  appState.shipMarker.setIcon(redIcon);
-  appState.shipMarker.bindPopup(
-    `<b style="color:#ff5d6c">⛔ On land</b><br>${escapeHtml(shipId)}<br><small>${lat}, ${lon}</small>`
-  ).openPopup();
-  appState.shipCircle.setLatLng(coords);
-  appState.shipCircle.setStyle({ color: '#ff5d6c', fillColor: '#ff5d6c' });
-  appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 7), { animate: true, duration: 0.8 });
-}
+    function initMap() {
+      appState.map = L.map('map', { zoomControl: true, attributionControl: true })
+        .setView(appState.initialMap.center, appState.initialMap.zoom);
 
-function resetMapView() {
-  if (!appState.map) return;
-  appState.map.setView(appState.initialMap.center, appState.initialMap.zoom);
-}
-function syncMapFromZone() {
-  const lat = parseFloat(id('z_lat').value), lon = parseFloat(id('z_lon').value);
-  if (!Number.isNaN(lat) && !Number.isNaN(lon)) updateShipMarker(lat, lon, `Zone check position<br>${lat}, ${lon}`);
-}
-function syncMapFromSlop() {
-  const lat = parseFloat(id('s_lat').value), lon = parseFloat(id('s_lon').value);
-  if (!Number.isNaN(lat) && !Number.isNaN(lon)) updateShipMarker(lat, lon, `Slop check position<br>${lat}, ${lon}`);
-}
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(appState.map);
 
-// ─── NORMALIZERS ─────────────────────────────────────────────────────────────
+      appState.shipMarker = L.marker(appState.initialMap.center).addTo(appState.map);
+      appState.shipMarker.bindPopup('Ship position');
 
-function normalizeZoneResponse(data) {
-  const activeZones = safeArray(data.active_zones);
-  let rulesChecklist = safeArray(data.rules_checklist);
-  let disposalAssessment = safeArray(data.disposal_assessment);
-  let annexSummary = safeArray(data.annex_summary);
+      appState.shipCircle = L.circle(appState.initialMap.center, {
+        radius: 12000,
+        color: '#3d7cff',
+        fillColor: '#3d7cff',
+        fillOpacity: 0.15,
+        weight: 1.5
+      }).addTo(appState.map);
+    }
 
-  if (!rulesChecklist.length && data.discharge_checklist && typeof data.discharge_checklist === 'object') {
-    disposalAssessment = Object.entries(data.discharge_checklist).map(([key, value]) => {
-      const allowed = Boolean(value?.allowed ?? value);
-      return { code: key, label: key, allowed, reason: value?.note || (allowed ? 'Allowed' : 'Restricted') };
-    });
-  }
-  if (!rulesChecklist.length) {
-    rulesChecklist = [
-      { rule_code: 'DISTANCE_12NM', rule_name: 'Distance from nearest land ≥ 12 NM', passed: Boolean(data.distance_to_nearest_land_nm > 12), actual_value: `${formatNum(data.distance_to_nearest_land_nm, 2)} NM`, required_value: '12.00 NM', note: 'Derived frontend fallback.' },
-      { rule_code: 'SPECIAL_AREA', rule_name: 'Outside MARPOL special area', passed: !Boolean(data.in_special_area) && data.zone_status !== 'RESTRICTED', actual_value: data.zone_status || 'Unknown', required_value: 'SAFE', note: 'Derived frontend fallback.' },
-    ];
-  }
-  if (!disposalAssessment.length) {
-    disposalAssessment = [{ code: 'generic', label: 'Operational disposal view', allowed: data.zone_status !== 'RESTRICTED' && Number(data.distance_to_nearest_land_nm) > 12, reason: data.summary || 'Derived from legacy response.' }];
-  }
-  if (!annexSummary.length && activeZones.length) {
-    const grouped = {};
-    activeZones.forEach(zone => {
-      const annex = zone.annex || 'Unknown';
-      if (!grouped[annex]) grouped[annex] = { annex, active_zone_count: 0, waste_types: [] };
-      grouped[annex].active_zone_count++;
-      if (zone.waste_type && !grouped[annex].waste_types.includes(zone.waste_type)) grouped[annex].waste_types.push(zone.waste_type);
-    });
-    annexSummary = Object.values(grouped);
-  }
+    function updateShipMarker(lat, lon, label = 'Ship position') {
+      if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
+      const coords = [Number(lat), Number(lon)];
+      appState.shipMarker.setIcon(new L.Icon.Default());
+      appState.shipMarker.setLatLng(coords);
+      appState.shipMarker.bindPopup(label);
+      appState.shipCircle.setLatLng(coords);
+      appState.shipCircle.setStyle({ color: '#3d7cff', fillColor: '#3d7cff' });
+      appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 5), { animate: true, duration: 0.8 });
+    }
 
-  return {
-    ship_id: data.ship_id || id('zship').value,
-    evaluation_type: data.evaluation_type || 'zone_check',
-    latitude: Number(data.latitude ?? id('zlat').value),
-    longitude: Number(data.longitude ?? id('zlon').value),
-    distance_to_nearest_land_nm: Number(data.distance_to_nearest_land_nm ?? 0),
-    nearest_land_rule_satisfied: typeof data.nearest_land_rule_satisfied === 'boolean' ? data.nearest_land_rule_satisfied : Number(data.distance_to_nearest_land_nm ?? 0) > 12,
-    in_special_area: typeof data.in_special_area === 'boolean' ? data.in_special_area : (data.zone_status === 'RESTRICTED' || activeZones.length > 0),
-    zone_status: data.zone_status || (activeZones.length ? 'RESTRICTED' : 'SAFE'),
-    active_zones: activeZones,
-    annex_summary: annexSummary,
-    disposal_assessment: disposalAssessment,
-    rules_checklist: rulesChecklist,
-    summary: data.summary || 'No summary returned by API.',
-    metadata: data.metadata || {},
-  };
-}
+    function updateShipMarkerLand(lat, lon, shipId) {
+      if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
+      const coords = [Number(lat), Number(lon)];
+      const redIcon = L.divIcon({
+        className: '',
+        html: `<div style="width:28px;height:28px;border-radius:50%;background:#ff5d6c;
+               border:3px solid #fff;box-shadow:0 2px 10px rgba(255,93,108,.6);
+               display:grid;place-items:center;font-size:14px;line-height:1;">⛔</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        popupAnchor: [0, -16]
+      });
+      appState.shipMarker.setLatLng(coords);
+      appState.shipMarker.setIcon(redIcon);
+      appState.shipMarker.bindPopup(
+        `<b style="color:#ff5d6c">⛔ On land</b><br>${escapeHtml(shipId)}<br><small>${lat}, ${lon}</small>`
+      ).openPopup();
+      appState.shipCircle.setLatLng(coords);
+      appState.shipCircle.setStyle({ color: '#ff5d6c', fillColor: '#ff5d6c' });
+      appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 7), { animate: true, duration: 0.8 });
+    }
 
-function normalizeSlopResponse(data) {
-  const normalized = normalizeZoneResponse(data);
-  let rulesChecklist = safeArray(data.rules_checklist);
-  if (!rulesChecklist.length && safeArray(data.checklist).length) {
-    rulesChecklist = data.checklist.map((item, index) => ({
-      rule_code: item.rule_code || `RULE${index + 1}`,
-      rule_name: item.rule || item.rule_name || `Rule ${index + 1}`,
-      passed: Boolean(item.passed),
-      actual_value: item.actual_value || '',
-      required_value: item.required_value || '',
-      note: item.note || '',
-    }));
-  }
-  if (!rulesChecklist.length) rulesChecklist = normalized.rules_checklist;
+    function resetMapView() {
+      if (!appState.map) return;
+      appState.map.setView(appState.initialMap.center, appState.initialMap.zoom);
+    }
 
-  let disposalAssessment = safeArray(data.disposal_assessment);
-  if (!disposalAssessment.length) {
-    const permitted = typeof data.slop_discharge_allowed === 'boolean' ? data.slop_discharge_allowed : rulesChecklist.every(r => Boolean(r.passed));
-    disposalAssessment = [{ code: 'slop', label: 'Slop / Oil-mixed water', allowed: permitted, reason: data.reason || data.summary || 'Derived from slop response.' }];
-  }
+    function syncMapFromZone() {
+      const lat = parseFloat(id('z_lat').value);
+      const lon = parseFloat(id('z_lon').value);
+      if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+        updateShipMarker(lat, lon, `Zone check position<br>${lat}, ${lon}`);
+      }
+    }
 
-  const summary = data.summary || data.reason || normalized.summary;
-  const status = data.overall_status || (disposalAssessment[0]?.allowed ? 'PERMITTED' : 'NOT PERMITTED');
+    function syncMapFromSlop() {
+      const lat = parseFloat(id('s_lat').value);
+      const lon = parseFloat(id('s_lon').value);
+      if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+        updateShipMarker(lat, lon, `Slop check position<br>${lat}, ${lon}`);
+      }
+    }
 
-  return { ...normalized, evaluation_type: data.evaluation_type || 'slop_check', rules_checklist: rulesChecklist, disposal_assessment: disposalAssessment, summary, overall_status: status };
-}
+    // ─── ROUTE MAP ────────────────────────────────────────────────────────────
 
-// ─── RENDERERS ───────────────────────────────────────────────────────────────
+    function initRouteMap() {
+      appState.routeMap = L.map('routeMap', { zoomControl: true, attributionControl: true })
+        .setView(appState.initialMap.center, appState.initialMap.zoom);
 
-const buildStatusTag = (text, mode) => `<span class="tag ${mode}">${escapeHtml(text)}</span>`;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(appState.routeMap);
 
-function renderStatsTop(result, isSlop = false) {
-  const mainStatus = isSlop ? result.overall_status : (result.disposal_assessment[0]?.allowed ? 'PERMITTED' : result.zone_status || 'UNKNOWN');
-  const statusClass = /permit|safe/i.test(mainStatus) ? 'ok' : /restricted|not/i.test(mainStatus) ? 'error' : 'warning';
-  return `<div class="stats-grid">
-    <div class="stat-card"><span class="stat-label">${isSlop ? 'Overall slop status' : 'Zone status'}</span><div class="stat-value">${escapeHtml(mainStatus)}</div><div class="stat-note">${isSlop ? 'Operational result from the slop rule set.' : 'General area safety or restriction status.'}</div></div>
-    <div class="stat-card"><span class="stat-label">Distance to nearest land</span><div class="stat-value">${formatNum(result.distance_to_nearest_land_nm, 2)} NM</div><div class="stat-note">${result.nearest_land_rule_satisfied ? '✅ 12 NM rule satisfied.' : '⚠️ Below the 12 NM threshold.'}</div></div>
-    <div class="stat-card"><span class="stat-label">Active zones</span><div class="stat-value">${safeArray(result.active_zones).length}</div><div class="stat-note">${result.in_special_area ? 'At least one MARPOL zone is active.' : 'No active MARPOL zones returned.'}</div></div>
-    <div class="stat-card"><span class="stat-label">${isSlop ? 'Checklist rules' : 'Disposal items'}</span><div class="stat-value">${isSlop ? safeArray(result.rules_checklist).length : safeArray(result.disposal_assessment).length}</div><div class="stat-note">${isSlop ? 'Rules evaluated for slop discharge.' : 'Operational disposal outcomes presented.'}</div></div>
-  </div>`;
-}
+      appState.routeOriginMarker = L.marker(appState.initialMap.center).addTo(appState.routeMap);
+      appState.routeDestMarker = L.marker(appState.initialMap.center).addTo(appState.routeMap);
+      appState.routeShipMarker = L.marker(appState.initialMap.center).addTo(appState.routeMap);
 
-function renderActiveZones(result) {
-  const zones = safeArray(result.active_zones);
-  if (!zones.length) return `<div class="empty-state">No active MARPOL zones were returned for the current coordinates.</div>`;
-  const tags = zones.map(z => `<span class="tag zone">${escapeHtml(z.annex ? `Annex ${z.annex}` : z.zone_name || 'Unnamed zone')}</span>`).join('');
-  const items = zones.map(z => `<div class="list-item"><div class="list-icon no">!</div><div><div class="list-item-title">${escapeHtml(z.zone_name || z.name || 'Unnamed MARPOL zone')}</div><div class="list-item-subtitle">${escapeHtml(z.restriction || 'Restriction not available.')}</div></div><div class="list-item-meta"><div><strong>Annex</strong> ${escapeHtml(z.annex)}</div><div><strong>Waste</strong> ${escapeHtml(z.waste_type || z.type)}</div><div><strong>ID</strong> ${escapeHtml(z.zone_id)}</div></div></div>`).join('');
-  return `<div class="tags-wrap">${tags}</div><div class="list-wrap">${items}</div>`;
-}
+      appState.routeLine = L.polyline([], {
+        color: '#35c5a7',
+        weight: 3,
+        opacity: 0.95,
+        dashArray: '8 10'
+      }).addTo(appState.routeMap);
+    }
 
-function renderAnnexSummary(result) {
-  const annexes = safeArray(result.annex_summary);
-  if (!annexes.length) return `<div class="empty-state">Annex summary is empty. This usually means no active zones were found.</div>`;
-  return `<div class="list-wrap">${annexes.map(item => `<div class="list-item"><div class="list-icon ok">A</div><div><div class="list-item-title">Annex ${escapeHtml(item.annex)}</div><div class="list-item-subtitle">Waste types: ${escapeHtml(safeArray(item.waste_types).join(', '))}</div></div><div class="list-item-meta"><div><strong>Zones</strong> ${escapeHtml(item.active_zone_count ?? 0)}</div></div></div>`).join('')}</div>`;
-}
+    function resetRouteMapView() {
+      if (!appState.routeMap) return;
+      appState.routeMap.setView(appState.initialMap.center, appState.initialMap.zoom);
+    }
 
-function renderDisposalAssessment(result) {
-  const items = safeArray(result.disposal_assessment);
-  if (!items.length) return `<div class="empty-state">No disposal assessment items were returned.</div>`;
-  return `<div class="list-wrap">${items.map(item => `<div class="list-item"><div class="list-icon ${item.allowed ? 'ok' : 'no'}">${item.allowed ? '✓' : '✗'}</div><div><div class="list-item-title">${escapeHtml(item.label || item.code || 'Assessment item')}</div><div class="list-item-subtitle">${escapeHtml(item.reason || 'No explanation returned.')}</div></div><div class="list-item-meta">${item.allowed ? `<span class="tag ok">Allowed</span>` : `<span class="tag error">Restricted</span>`}</div></div>`).join('')}</div>`;
-}
+    function syncMapFromRoute() {
+      const lat = parseFloat(id('r_lat').value);
+      const lon = parseFloat(id('r_lon').value);
+      if (!appState.routeMap || Number.isNaN(lat) || Number.isNaN(lon)) return;
 
-function renderRulesChecklist(result) {
-  const rules = safeArray(result.rules_checklist);
-  if (!rules.length) return `<div class="empty-state">No rules checklist was returned.</div>`;
-  return `<div class="list-wrap">${rules.map(rule => `<div class="list-item"><div class="list-icon ${rule.passed ? 'ok' : 'no'}">${rule.passed ? '✓' : '✗'}</div><div><div class="list-item-title">${escapeHtml(rule.rule_name || rule.rule_code || 'Rule')}</div><div class="list-item-subtitle">${escapeHtml(rule.note || 'No note returned.')}</div></div><div class="list-item-meta"><div><strong>Actual</strong> ${escapeHtml(rule.actual_value)}</div><div><strong>Required</strong> ${escapeHtml(rule.required_value)}</div></div></div>`).join('')}</div>`;
-}
+      const coords = [lat, lon];
+      appState.routeShipMarker.setLatLng(coords);
+      appState.routeShipMarker.bindPopup(`Route check position<br>${lat}, ${lon}`);
+      appState.routeMap.flyTo(coords, Math.max(appState.routeMap.getZoom(), 5), { animate: true, duration: 0.8 });
+    }
 
-function renderZoneResults(result) {
-  const bannerClass = (result.zone_status === 'SAFE' && result.nearest_land_rule_satisfied) ? 'info-banner banner-good' : 'info-banner banner-bad';
-  id('zoneResults').innerHTML = `
-    ${renderStatsTop(result, false)}
-    <div class="${bannerClass}">${escapeHtml(result.summary)}</div>
-    <div class="panel-grid">
-      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Active MARPOL zones</div></div></div>${renderActiveZones(result)}</div>
-      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Annex summary</div></div></div>${renderAnnexSummary(result)}</div>
-    </div>
-    <div class="panel-grid">
-      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Disposal assessment</div></div></div>${renderDisposalAssessment(result)}</div>
-      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Rules checklist</div></div></div>${renderRulesChecklist(result)}</div>
-    </div>`;
-}
+    function drawRouteOnMap(result) {
+      if (!appState.routeMap) return;
 
-function renderSlopResults(result) {
-  const isAllowed = safeArray(result.disposal_assessment)[0]?.allowed || /permit/i.test(result.overall_status);
-  const bannerClass = isAllowed ? 'info-banner banner-good' : 'info-banner banner-bad';
-  id('slopResults').innerHTML = `
-    ${renderStatsTop(result, true)}
-    <div class="${bannerClass}">${escapeHtml(result.summary)}</div>
-    <div class="subgrid">
-      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Slop decision</div></div></div>
-        <div class="tags-wrap">${buildStatusTag(isAllowed ? 'PERMITTED' : 'NOT PERMITTED', isAllowed ? 'ok' : 'error')}${buildStatusTag(result.in_special_area ? 'In special area' : 'Outside special area', result.in_special_area ? 'error' : 'ok')}${buildStatusTag(result.nearest_land_rule_satisfied ? '≥12 NM from land' : '<12 NM from land', result.nearest_land_rule_satisfied ? 'ok' : 'warning')}</div>
-        ${renderDisposalAssessment(result)}</div>
-      <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Slop rules checklist</div></div></div>${renderRulesChecklist(result)}</div>
-    </div>
-    <div class="panel card"><div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Active oil zones</div></div></div>${renderActiveZones(result)}</div>`;
-}
+      const originCoords = [Number(result.origin.lat), Number(result.origin.lon)];
+      const destCoords = [Number(result.destination.lat), Number(result.destination.lon)];
+      const shipCoords = [Number(result.latitude), Number(result.longitude)];
 
-// ─── HISTORY ─────────────────────────────────────────────────────────────────
+      appState.routeOriginMarker.setLatLng(originCoords).bindPopup(
+        `<strong>Origin</strong><br>${escapeHtml(result.origin.label)}<br><small>${formatNum(result.origin.lat, 4)}, ${formatNum(result.origin.lon, 4)}</small>`
+      );
 
-function addHistoryRecord(record) {
-  appState.history.unshift(record);
-  appState.history = appState.history.slice(0, 30);
-  localStorage.setItem('marpol_history', JSON.stringify(appState.history));
-  renderHistory();
-}
+      appState.routeDestMarker.setLatLng(destCoords).bindPopup(
+        `<strong>Destination</strong><br>${escapeHtml(result.destination.label)}<br><small>${formatNum(result.destination.lat, 4)}, ${formatNum(result.destination.lon, 4)}</small>`
+      );
 
-function renderHistory() {
-  const tbody = id('historyBody');
-  if (!appState.history.length) {
-    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No requests yet. Run a zone check or slop check to populate the session history.</div></td></tr>`;
-    return;
-  }
-  tbody.innerHTML = appState.history.map(item => {
-    const modeClass = /permit|safe/i.test(item.status) ? 'ok' : /restricted|not/i.test(item.status) ? 'bad' : 'warn';
-    return `<tr>
-      <td>${escapeHtml(item.time)}</td>
-      <td>${escapeHtml(item.ship_id)}</td>
-      <td>${escapeHtml(item.type)}</td>
-      <td>${escapeHtml(item.coords)}</td>
-      <td>${escapeHtml(formatNum(item.distance, 2))} NM</td>
-      <td><span class="history-status ${modeClass}">${escapeHtml(item.status)}</span></td>
-      <td>${escapeHtml(item.summary)}</td>
-    </tr>`;
-  }).join('');
-}
+      const shipIcon = result.is_on_route
+        ? new L.Icon.Default()
+        : L.divIcon({
+            className: '',
+            html: `<div style="width:28px;height:28px;border-radius:50%;background:#ff5d6c;
+                   border:3px solid #fff;box-shadow:0 2px 10px rgba(255,93,108,.6);
+                   display:grid;place-items:center;font-size:14px;line-height:1;">⛔</div>`,
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+            popupAnchor: [0, -16]
+          });
 
-function clearHistory() { appState.history = []; localStorage.removeItem('marpol_history'); renderHistory(); }
+      appState.routeShipMarker.setIcon(shipIcon);
+      appState.routeShipMarker.setLatLng(shipCoords).bindPopup(
+        result.is_on_route
+          ? `<b style="color:#35c5a7">✓ On route</b><br>${escapeHtml(result.ship_id)}`
+          : `<b style="color:#ff5d6c">⛔ Off route</b><br>${escapeHtml(result.ship_id)}`
+      ).openPopup();
 
-// ─── ZONE CHECK ──────────────────────────────────────────────────────────────
+      appState.routeLine.setLatLngs([originCoords, destCoords]);
+      appState.routeLine.setStyle({
+        color: result.is_on_route ? '#35c5a7' : '#ff5d6c'
+      });
 
-async function runZoneCheck() {
-  const lat = parseFloat(id("z_lat").value);
-  const lon = parseFloat(id("z_lon").value);
-  const shipId = id("z_ship").value.trim() || "SHIP_101";
+      const bounds = L.latLngBounds([originCoords, destCoords, shipCoords]);
+      appState.routeMap.flyToBounds(bounds, {
+        padding: [40, 40],
+        animate: true,
+        duration: 0.8
+      });
+    }
 
-  if (Number.isNaN(lat) || Number.isNaN(lon)) {
-    id("zoneResults").innerHTML = `<div class="info-banner banner-bad">Please enter valid latitude and longitude values.</div>`;
-    return;
-  }
+    // ─── NORMALIZERS ──────────────────────────────────────────────────────────
 
-  // ✅ Move marker BEFORE fetch — fires for ALL outcomes including 400
-  updateShipMarker(lat, lon, `<strong>${escapeHtml(shipId)}</strong><br>Checking… (${lat}, ${lon})`);
+    function normalizeZoneResponse(data) {
+      const activeZones = safeArray(data.active_zones);
+      let rulesChecklist = safeArray(data.rules_checklist);
+      let disposalAssessment = safeArray(data.disposal_assessment);
+      let annexSummary = safeArray(data.annex_summary);
 
-  id("zoneSpinner").style.display = "inline-block";
-  id("zoneResults").innerHTML = "";
+      if (!disposalAssessment.length && data.discharge_checklist && typeof data.discharge_checklist === 'object') {
+        disposalAssessment = Object.entries(data.discharge_checklist).map(([key, value]) => {
+          const allowed = Boolean(value?.allowed ?? value);
+          return {
+            code: key,
+            label: key,
+            allowed,
+            reason: value?.note || (allowed ? 'Allowed' : 'Restricted')
+          };
+        });
+      }
 
-  const payload = { ship_id: shipId, latitude: lat, longitude: lon };
-  const filter = id("z_filter").value;
-  if (filter) payload.waste_type_filter = filter;
+      if (!rulesChecklist.length) {
+        rulesChecklist = [
+          {
+            rule_code: 'DISTANCE_12NM',
+            rule_name: 'Distance from nearest land at least 12 NM',
+            passed: Boolean(Number(data.distance_to_nearest_land_nm ?? 0) >= 12),
+            actual_value: `${formatNum(data.distance_to_nearest_land_nm, 2)} NM`,
+            required_value: '>= 12.00 NM',
+            note: 'Derived frontend fallback.'
+          },
+          {
+            rule_code: 'SPECIAL_AREA',
+            rule_name: 'Outside MARPOL special area',
+            passed: !Boolean(data.in_special_area || data.zone_status === 'RESTRICTED'),
+            actual_value: data.zone_status || 'Unknown',
+            required_value: 'SAFE',
+            note: 'Derived frontend fallback.'
+          }
+        ];
+      }
 
-  try {
-    const response = await fetch(apiBase() + "/api/v1/check-zone", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+      if (!disposalAssessment.length) {
+        disposalAssessment = [
+          {
+            code: 'generic',
+            label: 'Operational disposal view',
+            allowed: data.zone_status !== 'RESTRICTED' && Number(data.distance_to_nearest_land_nm ?? 0) >= 12,
+            reason: data.summary || 'Derived from legacy response.'
+          }
+        ];
+      }
 
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      const detail = errData?.detail;
-      const msg =
-        typeof detail === "string"
-          ? detail
-          : (detail?.message || errData?.message || `HTTP ${response.status}`);
+      if (!annexSummary.length && activeZones.length) {
+        const grouped = {};
+        activeZones.forEach(zone => {
+          const annex = zone.annex || 'Unknown';
+          if (!grouped[annex]) {
+            grouped[annex] = { annex, active_zone_count: 0, waste_types: [] };
+          }
+          grouped[annex].active_zone_count += 1;
+          if (zone.waste_type && !grouped[annex].waste_types.includes(zone.waste_type)) {
+            grouped[annex].waste_types.push(zone.waste_type);
+          }
+        });
+        annexSummary = Object.values(grouped);
+      }
 
-      const isLandError =
-        response.status === 400 &&
-        (
-          detail?.error === "INVALID_POSITION" ||
-          detail?.code === "INVALID_POSITION" ||
-          String(msg).toLowerCase().includes("land") ||
-          String(msg).toLowerCase().includes("invalid position")
-        );
+      return {
+        ship_id: data.ship_id || id('z_ship')?.value || 'SHIP_101',
+        evaluation_type: data.evaluation_type || 'zone_check',
+        latitude: Number(data.latitude ?? id('z_lat')?.value ?? 0),
+        longitude: Number(data.longitude ?? id('z_lon')?.value ?? 0),
+        distance_to_nearest_land_nm: Number(data.distance_to_nearest_land_nm ?? 0),
+        nearest_land_rule_satisfied:
+          typeof data.nearest_land_rule_satisfied === 'boolean'
+            ? data.nearest_land_rule_satisfied
+            : Number(data.distance_to_nearest_land_nm ?? 0) >= 12,
+        in_special_area:
+          typeof data.in_special_area === 'boolean'
+            ? data.in_special_area
+            : (data.zone_status === 'RESTRICTED' || activeZones.length > 0),
+        zone_status: data.zone_status || (activeZones.length ? 'RESTRICTED' : 'SAFE'),
+        active_zones: activeZones,
+        annex_summary: annexSummary,
+        disposal_assessment: disposalAssessment,
+        rules_checklist: rulesChecklist,
+        summary: data.summary || 'No summary returned by API.',
+        metadata: data.metadata || {}
+      };
+    }
 
-      if (isLandError) {
-        updateShipMarkerLand(lat, lon, shipId);
+    function normalizeSlopResponse(data) {
+      const normalized = normalizeZoneResponse(data);
+      let rulesChecklist = safeArray(data.rules_checklist);
+
+      if (!rulesChecklist.length && safeArray(data.checklist).length) {
+        rulesChecklist = data.checklist.map((item, index) => ({
+          rule_code: item.rule_code || `RULE${index + 1}`,
+          rule_name: item.rule || item.rule_name || `Rule ${index + 1}`,
+          passed: Boolean(item.passed),
+          actual_value: item.actual_value || '',
+          required_value: item.required_value || '',
+          note: item.note || ''
+        }));
+      }
+
+      if (!rulesChecklist.length) rulesChecklist = normalized.rules_checklist;
+
+      let disposalAssessment = safeArray(data.disposal_assessment);
+      if (!disposalAssessment.length) {
+        const permitted = typeof data.slop_discharge_allowed === 'boolean'
+          ? data.slop_discharge_allowed
+          : rulesChecklist.every(r => Boolean(r.passed));
+
+        disposalAssessment = [
+          {
+            code: 'slop',
+            label: 'Slop / Oil-mixed water',
+            allowed: permitted,
+            reason: data.reason || data.summary || 'Derived from slop response.'
+          }
+        ];
+      }
+
+      const summary = data.summary || data.reason || normalized.summary;
+      const status = data.overall_status || (disposalAssessment[0]?.allowed ? 'PERMITTED' : 'NOT PERMITTED');
+
+      return {
+        ...normalized,
+        evaluation_type: data.evaluation_type || 'slop_check',
+        rules_checklist: rulesChecklist,
+        disposal_assessment: disposalAssessment,
+        summary,
+        overall_status: status
+      };
+    }
+
+    // ─── RENDERERS ────────────────────────────────────────────────────────────
+
+    const buildStatusTag = (text, mode) => `<span class="tag ${mode}">${escapeHtml(text)}</span>`;
+
+    function renderStatsTop(result, isSlop = false) {
+      const mainStatus = isSlop
+        ? result.overall_status
+        : (result.disposal_assessment[0]?.allowed ? 'PERMITTED' : result.zone_status || 'UNKNOWN');
+
+      return `<div class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-label">${isSlop ? 'Overall slop status' : 'Zone status'}</span>
+          <div class="stat-value">${escapeHtml(mainStatus)}</div>
+          <div class="stat-note">${isSlop ? 'Operational result from the slop rule set.' : 'General area safety or restriction status.'}</div>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Distance to nearest land</span>
+          <div class="stat-value">${formatNum(result.distance_to_nearest_land_nm, 2)} NM</div>
+          <div class="stat-note">${result.nearest_land_rule_satisfied ? '✅ 12 NM rule satisfied.' : '⚠️ Below the 12 NM threshold.'}</div>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Active zones</span>
+          <div class="stat-value">${safeArray(result.active_zones).length}</div>
+          <div class="stat-note">${result.in_special_area ? 'At least one MARPOL zone is active.' : 'No active MARPOL zones returned.'}</div>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">${isSlop ? 'Checklist rules' : 'Disposal items'}</span>
+          <div class="stat-value">${isSlop ? safeArray(result.rules_checklist).length : safeArray(result.disposal_assessment).length}</div>
+          <div class="stat-note">${isSlop ? 'Rules evaluated for slop discharge.' : 'Operational disposal outcomes presented.'}</div>
+        </div>
+      </div>`;
+    }
+
+    function renderActiveZones(result) {
+      const zones = safeArray(result.active_zones);
+      if (!zones.length) return `<div class="empty-state">No active MARPOL zones were returned for the current coordinates.</div>`;
+
+      const tags = zones
+        .map(z => `<span class="tag zone">${escapeHtml(z.annex ? `Annex ${z.annex}` : z.zone_name || 'Unnamed zone')}</span>`)
+        .join('');
+
+      const items = zones
+        .map(z => `<div class="list-item">
+          <div class="list-icon no">!</div>
+          <div>
+            <div class="list-item-title">${escapeHtml(z.zone_name || z.name || 'Unnamed MARPOL zone')}</div>
+            <div class="list-item-subtitle">${escapeHtml(z.restriction || 'Restriction not available.')}</div>
+          </div>
+          <div class="list-item-meta">
+            <div><strong>Annex</strong> ${escapeHtml(z.annex)}</div>
+            <div><strong>Waste</strong> ${escapeHtml(z.waste_type || z.type)}</div>
+            <div><strong>ID</strong> ${escapeHtml(z.zone_id)}</div>
+          </div>
+        </div>`).join('');
+
+      return `<div class="tags-wrap">${tags}</div><div class="list-wrap">${items}</div>`;
+    }
+
+    function renderAnnexSummary(result) {
+      const annexes = safeArray(result.annex_summary);
+      if (!annexes.length) return `<div class="empty-state">Annex summary is empty. This usually means no active zones were found.</div>`;
+
+      return `<div class="list-wrap">${annexes.map(item => `
+        <div class="list-item">
+          <div class="list-icon ok">A</div>
+          <div>
+            <div class="list-item-title">Annex ${escapeHtml(item.annex)}</div>
+            <div class="list-item-subtitle">Waste types: ${escapeHtml(safeArray(item.waste_types).join(', '))}</div>
+          </div>
+          <div class="list-item-meta">
+            <div><strong>Zones</strong> ${escapeHtml(item.active_zone_count ?? 0)}</div>
+          </div>
+        </div>
+      `).join('')}</div>`;
+    }
+
+    function renderDisposalAssessment(result) {
+      const items = safeArray(result.disposal_assessment);
+      if (!items.length) return `<div class="empty-state">No disposal assessment items were returned.</div>`;
+
+      return `<div class="list-wrap">${items.map(item => `
+        <div class="list-item">
+          <div class="list-icon ${item.allowed ? 'ok' : 'no'}">${item.allowed ? '✓' : '✗'}</div>
+          <div>
+            <div class="list-item-title">${escapeHtml(item.label || item.code || 'Assessment item')}</div>
+            <div class="list-item-subtitle">${escapeHtml(item.reason || 'No explanation returned.')}</div>
+          </div>
+          <div class="list-item-meta">
+            ${item.allowed ? `<span class="tag ok">Allowed</span>` : `<span class="tag error">Restricted</span>`}
+          </div>
+        </div>
+      `).join('')}</div>`;
+    }
+
+    function renderRulesChecklist(result) {
+      const rules = safeArray(result.rules_checklist);
+      if (!rules.length) return `<div class="empty-state">No rules checklist was returned.</div>`;
+
+      return `<div class="list-wrap">${rules.map(rule => `
+        <div class="list-item">
+          <div class="list-icon ${rule.passed ? 'ok' : 'no'}">${rule.passed ? '✓' : '✗'}</div>
+          <div>
+            <div class="list-item-title">${escapeHtml(rule.rule_name || rule.rule_code || 'Rule')}</div>
+            <div class="list-item-subtitle">${escapeHtml(rule.note || 'No note returned.')}</div>
+          </div>
+          <div class="list-item-meta">
+            <div><strong>Actual</strong> ${escapeHtml(rule.actual_value)}</div>
+            <div><strong>Required</strong> ${escapeHtml(rule.required_value)}</div>
+          </div>
+        </div>
+      `).join('')}</div>`;
+    }
+
+    function renderZoneResults(result) {
+      const bannerClass = (result.zone_status === 'SAFE' && result.nearest_land_rule_satisfied)
+        ? 'info-banner banner-good'
+        : 'info-banner banner-bad';
+
+      id('zoneResults').innerHTML = `
+        ${renderStatsTop(result, false)}
+        <div class="${bannerClass}">${escapeHtml(result.summary)}</div>
+        <div class="panel-grid">
+          <div class="panel card">
+            <div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Active MARPOL zones</div></div></div>
+            ${renderActiveZones(result)}
+          </div>
+          <div class="panel card">
+            <div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Annex summary</div></div></div>
+            ${renderAnnexSummary(result)}
+          </div>
+        </div>
+        <div class="panel-grid">
+          <div class="panel card">
+            <div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Disposal assessment</div></div></div>
+            ${renderDisposalAssessment(result)}
+          </div>
+          <div class="panel card">
+            <div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Rules checklist</div></div></div>
+            ${renderRulesChecklist(result)}
+          </div>
+        </div>`;
+    }
+
+    function renderSlopResults(result) {
+      const isAllowed = safeArray(result.disposal_assessment)[0]?.allowed || /permit/i.test(result.overall_status);
+      const bannerClass = isAllowed ? 'info-banner banner-good' : 'info-banner banner-bad';
+
+      id('slopResults').innerHTML = `
+        ${renderStatsTop(result, true)}
+        <div class="${bannerClass}">${escapeHtml(result.summary)}</div>
+        <div class="subgrid">
+          <div class="panel card">
+            <div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Slop decision</div></div></div>
+            <div class="tags-wrap">
+              ${buildStatusTag(isAllowed ? 'PERMITTED' : 'NOT PERMITTED', isAllowed ? 'ok' : 'error')}
+              ${buildStatusTag(result.in_special_area ? 'In special area' : 'Outside special area', result.in_special_area ? 'error' : 'ok')}
+              ${buildStatusTag(result.nearest_land_rule_satisfied ? '≥12 NM from land' : '<12 NM from land', result.nearest_land_rule_satisfied ? 'ok' : 'warning')}
+            </div>
+            ${renderDisposalAssessment(result)}
+          </div>
+          <div class="panel card">
+            <div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Slop rules checklist</div></div></div>
+            ${renderRulesChecklist(result)}
+          </div>
+        </div>
+        <div class="panel card">
+          <div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Active oil zones</div></div></div>
+          ${renderActiveZones(result)}
+        </div>`;
+    }
+
+    function renderRouteResults(result) {
+      const bannerClass = result.is_on_route ? 'info-banner banner-good' : 'info-banner banner-bad';
+      const crossTrackAbs = Math.abs(Number(result.cross_track_distance_nm || 0));
+
+      id('routeResults').innerHTML = `
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-label">Route status</span>
+            <div class="stat-value">${escapeHtml(result.route_status || (result.is_on_route ? 'ON_ROUTE' : 'OFF_ROUTE'))}</div>
+            <div class="stat-note">${result.is_on_route ? 'Ship position matches the intended route corridor.' : 'Ship position is outside the allowed route corridor or span.'}</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Cross-track distance</span>
+            <div class="stat-value">${formatNum(result.cross_track_distance_nm, 2)} NM</div>
+            <div class="stat-note">Perpendicular distance from route line.</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Route progress</span>
+            <div class="stat-value">${formatNum(result.route_progress_percent, 1)}%</div>
+            <div class="stat-note">${formatNum(result.along_track_distance_nm, 1)} NM along route.</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Total route distance</span>
+            <div class="stat-value">${formatNum(result.total_route_distance_nm, 1)} NM</div>
+            <div class="stat-note">Allowed corridor: ${formatNum(result.corridor_width_nm, 0)} NM.</div>
+          </div>
+        </div>
+
+        <div class="${bannerClass}">${escapeHtml(result.summary || '')}</div>
+
+        <div class="tags-wrap">
+          ${buildStatusTag(result.is_on_route ? 'On route' : 'Off route', result.is_on_route ? 'ok' : 'error')}
+          ${buildStatusTag(`${formatNum(crossTrackAbs, 2)} NM off track`, result.is_on_route ? 'ok' : 'error')}
+          ${buildStatusTag(`${formatNum(result.route_progress_percent, 1)}% progress`, 'warning')}
+        </div>
+
+        <div class="panel-grid">
+          <div class="panel card">
+            <div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Origin</div></div></div>
+            <div class="list-wrap">
+              <div class="list-item">
+                <div class="list-icon ok">O</div>
+                <div>
+                  <div class="list-item-title">${escapeHtml(result.origin?.label || 'Origin')}</div>
+                  <div class="list-item-subtitle">${formatNum(result.origin?.lat, 4)}, ${formatNum(result.origin?.lon, 4)}</div>
+                </div>
+                <div class="list-item-meta">
+                  <div><strong>Source</strong> ${escapeHtml(result.origin?.source || '—')}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel card">
+            <div class="section-heading"><div><div class="section-title" style="font-size:1.15rem">Destination</div></div></div>
+            <div class="list-wrap">
+              <div class="list-item">
+                <div class="list-icon ok">D</div>
+                <div>
+                  <div class="list-item-title">${escapeHtml(result.destination?.label || 'Destination')}</div>
+                  <div class="list-item-subtitle">${formatNum(result.destination?.lat, 4)}, ${formatNum(result.destination?.lon, 4)}</div>
+                </div>
+                <div class="list-item-meta">
+                  <div><strong>Source</strong> ${escapeHtml(result.destination?.source || '—')}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // ─── HISTORY ──────────────────────────────────────────────────────────────
+
+    function addHistoryRecord(record) {
+      appState.history.unshift(record);
+      appState.history = appState.history.slice(0, 30);
+      localStorage.setItem('marpol_history', JSON.stringify(appState.history));
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const tbody = id('historyBody');
+      if (!appState.history.length) {
+        tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No requests yet. Run a zone check, slop check, or route check to populate the session history.</div></td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = appState.history.map(item => {
+        const modeClass = /permit|safe|on_route|on route|ok/i.test(item.status)
+          ? 'ok'
+          : /restricted|not|off_route|off route|error|bad/i.test(item.status)
+            ? 'bad'
+            : 'warn';
+
+        return `<tr>
+          <td>${escapeHtml(item.time)}</td>
+          <td>${escapeHtml(item.ship_id)}</td>
+          <td>${escapeHtml(item.type)}</td>
+          <td>${escapeHtml(item.coords)}</td>
+          <td>${escapeHtml(formatNum(item.distance, 2))} ${escapeHtml(item.distance_unit || 'NM')}</td>
+          <td><span class="history-status ${modeClass}">${escapeHtml(item.status)}</span></td>
+          <td>${escapeHtml(item.summary)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function clearHistory() {
+      appState.history = [];
+      localStorage.removeItem('marpol_history');
+      renderHistory();
+    }
+
+    // ─── ZONE CHECK ───────────────────────────────────────────────────────────
+
+    async function runZoneCheck() {
+      const lat = parseFloat(id("z_lat").value);
+      const lon = parseFloat(id("z_lon").value);
+      const shipId = id("z_ship").value.trim() || "SHIP_101";
+
+      if (Number.isNaN(lat) || Number.isNaN(lon)) {
+        id("zoneResults").innerHTML = `<div class="info-banner banner-bad">Please enter valid latitude and longitude values.</div>`;
+        return;
+      }
+
+      updateShipMarker(lat, lon, `<strong>${escapeHtml(shipId)}</strong><br>Checking… (${lat}, ${lon})`);
+
+      id("zoneSpinner").style.display = "inline-block";
+      id("zoneResults").innerHTML = "";
+
+      const payload = { ship_id: shipId, latitude: lat, longitude: lon };
+      const filter = id("z_filter").value;
+      if (filter) payload.waste_type_filter = filter;
+
+      try {
+        const response = await fetch(apiBase() + "/api/v1/check-zone", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const detail = errData?.detail;
+          const msg = typeof detail === "string"
+            ? detail
+            : (detail?.message || errData?.message || `HTTP ${response.status}`);
+
+          const isLandError =
+            response.status === 400 &&
+            (
+              detail?.error === "INVALID_POSITION" ||
+              detail?.code === "INVALID_POSITION" ||
+              String(msg).toLowerCase().includes("land") ||
+              String(msg).toLowerCase().includes("invalid position")
+            );
+
+          if (isLandError) {
+            updateShipMarkerLand(lat, lon, shipId);
+            id("zoneResults").innerHTML = `
+              <div class="info-banner banner-bad">
+                <strong>⛔ Position is on land</strong><br>
+                Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
+                A vessel cannot be positioned on land. Please enter valid sea coordinates.
+              </div>`;
+            addHistoryRecord({
+              time: new Date().toLocaleTimeString(),
+              ship_id: shipId,
+              type: "Zone check",
+              coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
+              distance: 0,
+              distance_unit: 'NM',
+              status: "ON LAND",
+              summary: "Rejected — coordinates fall on land."
+            });
+          } else {
+            id("zoneResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
+          }
+          return;
+        }
+
+        const data = await response.json();
+        const result = normalizeZoneResponse(data);
+        appState.lastZoneResult = result;
+
+        if (appState.shipCircle) {
+          appState.shipCircle.setStyle({ color: "#3d7cff", fillColor: "#3d7cff" });
+        }
+
+        updateShipMarker(result.latitude, result.longitude, `
+          <strong>${escapeHtml(result.ship_id)}</strong><br>
+          Zone check<br>
+          ${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}
+        `);
+
+        renderZoneResults(result);
+
+        addHistoryRecord({
+          time: new Date().toLocaleTimeString(),
+          ship_id: result.ship_id,
+          type: "Zone check",
+          coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
+          distance: result.distance_to_nearest_land_nm,
+          distance_unit: 'NM',
+          status: result.zone_status,
+          summary: result.summary
+        });
+      } catch (error) {
         id("zoneResults").innerHTML = `
           <div class="info-banner banner-bad">
-            <strong>⛔ Position is on land</strong><br>
-            Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
-            A vessel cannot be positioned on land. Please enter valid sea coordinates.
-          </div>`;
-        addHistoryRecord({
-          time: new Date().toLocaleTimeString(),
-          ship_id: shipId,
-          type: "Zone check",
-          coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
-          distance: 0,
-          status: "ON LAND",
-          summary: "Rejected — coordinates fall on land."
-      });
-      } else {
-        id("zoneResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
+            Failed to run zone check. ${escapeHtml(error.message || "Unknown error")}
+          </div>
+        `;
+      } finally {
+        id("zoneSpinner").style.display = "none";
       }
-      return;
     }
 
-    const data = await response.json();
-    const result = normalizeZoneResponse(data);
-    appState.lastZoneResult = result;
+    // ─── SLOP CHECK ───────────────────────────────────────────────────────────
 
-    // Reset circle to blue for valid sea position
-    if (appState.shipCircle) appState.shipCircle.setStyle({ color: "#3d7cff", fillColor: "#3d7cff" });
-    updateShipMarker(result.latitude, result.longitude, `
-      <strong>${escapeHtml(result.ship_id)}</strong><br>
-      Zone check<br>
-      ${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}
-    `);
-    renderZoneResults(result);
+    async function runSlopCheck() {
+      const lat = parseFloat(id("s_lat").value);
+      const lon = parseFloat(id("s_lon").value);
+      const shipId = id("s_ship").value.trim() || "SHIP_101";
 
-    addHistoryRecord({
-      time: new Date().toLocaleTimeString(),
-      ship_id: result.ship_id,
-      type: "Zone check",
-      coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
-      distance: result.distance_to_nearest_land_nm,
-      status: result.zone_status,
-      summary: result.summary
-    });
-  } catch (error) {
-    id("zoneResults").innerHTML = `
-      <div class="info-banner banner-bad">
-        Failed to run zone check. ${escapeHtml(error.message || "Unknown error")}
-      </div>
-    `;
-  } finally {
-    id("zoneSpinner").style.display = "none";
-  }
-}
+      if (Number.isNaN(lat) || Number.isNaN(lon)) {
+        id("slopResults").innerHTML = `<div class="info-banner banner-bad">Please enter valid latitude and longitude values.</div>`;
+        return;
+      }
 
-// ─── SLOP CHECK ──────────────────────────────────────────────────────────────
+      updateShipMarker(lat, lon, `<strong>${escapeHtml(shipId)}</strong><br>Checking slop… (${lat}, ${lon})`);
 
-async function runSlopCheck() {
-  const lat = parseFloat(id("s_lat").value);
-  const lon = parseFloat(id("s_lon").value);
-  const shipId = id("s_ship").value.trim() || "SHIP_101";
+      id("slopSpinner").style.display = "inline-block";
+      id("slopResults").innerHTML = "";
 
-  if (Number.isNaN(lat) || Number.isNaN(lon)) {
-    id("slopResults").innerHTML = `<div class="info-banner banner-bad">Please enter valid latitude and longitude values.</div>`;
-    return;
-  }
+      const payload = {
+        ship_id: shipId,
+        latitude: lat,
+        longitude: lon,
+        ship_speed_knots: parseFloat(id("s_speed").value),
+        oil_content_ppm: parseFloat(id("s_ppm").value),
+        discharge_rate_lpnm: parseFloat(id("s_rate").value),
+        tank_capacity_m3: parseFloat(id("s_tank").value),
+        odmcs_operational: id("s_odmcs").value === "true"
+      };
 
-  // ✅ Move marker BEFORE fetch
-  updateShipMarker(lat, lon, `<strong>${escapeHtml(shipId)}</strong><br>Checking slop… (${lat}, ${lon})`);
+      try {
+        const response = await fetch(apiBase() + "/api/v1/check-slop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
 
-  id("slopSpinner").style.display = "inline-block";
-  id("slopResults").innerHTML = "";
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const detail = errData?.detail;
+          const msg = typeof detail === "string"
+            ? detail
+            : (detail?.message || errData?.message || `HTTP ${response.status}`);
 
-  const payload = {
-    ship_id: shipId,
-    latitude: lat,
-    longitude: lon,
-    ship_speed_knots: parseFloat(id("s_speed").value),
-    oil_content_ppm: parseFloat(id("s_ppm").value),
-    discharge_rate_lpnm: parseFloat(id("s_rate").value),
-    tank_capacity_m3: parseFloat(id("s_tank").value),
-    odmcs_operational: id("s_odmcs").value === "true"
-  };
+          const isLandError =
+            response.status === 400 &&
+            (
+              detail?.error === "INVALID_POSITION" ||
+              detail?.code === "INVALID_POSITION" ||
+              String(msg).toLowerCase().includes("land") ||
+              String(msg).toLowerCase().includes("invalid position")
+            );
 
-  try {
-    const response = await fetch(apiBase() + "/api/v1/check-slop", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+          if (isLandError) {
+            updateShipMarkerLand(lat, lon, shipId);
+            id("slopResults").innerHTML = `
+              <div class="info-banner banner-bad">
+                <strong>⛔ Position is on land</strong><br>
+                Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
+                A vessel cannot be positioned on land. Please enter valid sea coordinates.
+              </div>`;
+            addHistoryRecord({
+              time: new Date().toLocaleTimeString(),
+              ship_id: shipId,
+              type: "Slop check",
+              coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
+              distance: 0,
+              distance_unit: 'NM',
+              status: "ON LAND",
+              summary: "Rejected — coordinates fall on land."
+            });
+          } else {
+            id("slopResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
+          }
+          return;
+        }
 
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      const detail = errData?.detail;
-      const msg =
-        typeof detail === "string"
-          ? detail
-          : (detail?.message || errData?.message || `HTTP ${response.status}`);
+        const data = await response.json();
+        const result = normalizeSlopResponse(data);
+        appState.lastSlopResult = result;
 
-      const isLandError =
-        response.status === 400 &&
-        (
-          detail?.error === "INVALID_POSITION" ||
-          detail?.code === "INVALID_POSITION" ||
-          String(msg).toLowerCase().includes("land") ||
-          String(msg).toLowerCase().includes("invalid position")
-        );
+        if (appState.shipCircle) {
+          appState.shipCircle.setStyle({ color: "#3d7cff", fillColor: "#3d7cff" });
+        }
 
-      if (isLandError) {
-        updateShipMarkerLand(lat, lon, shipId);
+        updateShipMarker(result.latitude, result.longitude, `
+          <strong>${escapeHtml(result.ship_id)}</strong><br>
+          Slop check<br>
+          ${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}
+        `);
+
+        renderSlopResults(result);
+
+        addHistoryRecord({
+          time: new Date().toLocaleTimeString(),
+          ship_id: result.ship_id,
+          type: "Slop check",
+          coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
+          distance: result.distance_to_nearest_land_nm,
+          distance_unit: 'NM',
+          status: result.overall_status || (safeArray(result.disposal_assessment)[0]?.allowed ? "PERMITTED" : "NOT PERMITTED"),
+          summary: result.summary
+        });
+      } catch (error) {
         id("slopResults").innerHTML = `
           <div class="info-banner banner-bad">
-            <strong>⛔ Position is on land</strong><br>
-            Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
-            A vessel cannot be positioned on land. Please enter valid sea coordinates.
-          </div>`;
-        addHistoryRecord({
-          time: new Date().toLocaleTimeString(),
-          ship_id: shipId,
-          type: "Slop check",
-          coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
-          distance: 0,
-          status: "ON LAND",
-          summary: "Rejected — coordinates fall on land."
-      });
-      } else {
-        id("slopResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
+            Failed to run slop check. ${escapeHtml(error.message || "Unknown error")}
+          </div>
+        `;
+      } finally {
+        id("slopSpinner").style.display = "none";
       }
-      return;
     }
 
-    const data = await response.json();
-    const result = normalizeSlopResponse(data);
-    appState.lastSlopResult = result;
+    // ─── ROUTE CHECK ──────────────────────────────────────────────────────────
 
-    if (appState.shipCircle) appState.shipCircle.setStyle({ color: "#3d7cff", fillColor: "#3d7cff" });
-    updateShipMarker(result.latitude, result.longitude, `
-      <strong>${escapeHtml(result.ship_id)}</strong><br>
-      Slop check<br>
-      ${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}
-    `);
-    renderSlopResults(result);
+    async function runRouteCheck() {
+      const lat = parseFloat(id("r_lat").value);
+      const lon = parseFloat(id("r_lon").value);
+      const shipId = id("r_ship").value.trim() || "SHIP_101";
+      const originPort = id("r_origin_port").value.trim();
+      const destinationPort = id("r_dest_port").value.trim();
+      const corridorWidth = parseFloat(id("r_corridor").value) || 25;
 
-    addHistoryRecord({
-      time: new Date().toLocaleTimeString(),
-      ship_id: result.ship_id,
-      type: "Slop check",
-      coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
-      distance: result.distance_to_nearest_land_nm,
-      status: result.overall_status || (safeArray(result.disposal_assessment)[0]?.allowed ? "PERMITTED" : "NOT PERMITTED"),
-      summary: result.summary
-    });
-  } catch (error) {
-    id("slopResults").innerHTML = `
-      <div class="info-banner banner-bad">
-        Failed to run slop check. ${escapeHtml(error.message || "Unknown error")}
-      </div>
-    `;
-  } finally {
-    id("slopSpinner").style.display = "none";
-  }
-}
+      if (Number.isNaN(lat) || Number.isNaN(lon)) {
+        id("routeResults").innerHTML = `<div class="info-banner banner-bad">Please enter valid ship latitude and longitude values.</div>`;
+        return;
+      }
 
-// ─── INIT ─────────────────────────────────────────────────────────────────────
+      if (!originPort || !destinationPort) {
+        id("routeResults").innerHTML = `<div class="info-banner banner-bad">Please enter both origin and destination ports.</div>`;
+        return;
+      }
 
-function preloadExamples() { renderHistory(); syncMapFromZone(); }
+      id("routeSpinner").style.display = "inline-block";
+      id("routeResults").innerHTML = "";
 
-function init() {
-  setTheme(appState.currentTheme);
-  initMap();
-  preloadExamples();
-  checkHealth();
-  setInterval(checkHealth, 10000);
-}
+      const payload = {
+        ship_id: shipId,
+        latitude: lat,
+        longitude: lon,
+        origin_port: originPort,
+        destination_port: destinationPort,
+        corridor_width_nm: corridorWidth
+      };
 
-window.addEventListener('DOMContentLoaded', init);
-</script>
+      try {
+        const response = await fetch(apiBase() + "/api/v1/check-route", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const detail = errData?.detail;
+          const msg = typeof detail === "string"
+            ? detail
+            : (detail?.message || errData?.message || `HTTP ${response.status}`);
+
+          const isLandError =
+            response.status === 400 &&
+            (
+              detail?.error === "INVALID_POSITION" ||
+              detail?.code === "INVALID_POSITION" ||
+              String(msg).toLowerCase().includes("land") ||
+              String(msg).toLowerCase().includes("invalid position")
+            );
+
+          if (isLandError) {
+            id("routeResults").innerHTML = `
+              <div class="info-banner banner-bad">
+                <strong>⛔ Position is on land</strong><br>
+                Coordinates <strong>(${lat}, ${lon})</strong> fall on land.
+                A vessel cannot be be on land while travelling between ports.
+              </div>`;
+          } else {
+            id("routeResults").innerHTML = `<div class="info-banner banner-bad"><strong>API error ${response.status}</strong><br>${escapeHtml(msg)}</div>`;
+          }
+
+          addHistoryRecord({
+            time: new Date().toLocaleTimeString(),
+            ship_id: shipId,
+            type: "Route check",
+            coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
+            distance: 0,
+            distance_unit: 'NM',
+            status: isLandError ? "ON LAND" : "ERROR",
+            summary: msg
+          });
+          return;
+        }
+
+        const result = await response.json();
+        appState.lastRouteResult = result;
+
+        drawRouteOnMap(result);
+        renderRouteResults(result);
+
+        addHistoryRecord({
+          time: new Date().toLocaleTimeString(),
+          ship_id: result.ship_id,
+          type: "Route check",
+          coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
+          distance: Math.abs(Number(result.cross_track_distance_nm || 0)),
+          distance_unit: 'NM',
+          status: result.route_status || (result.is_on_route ? "ON_ROUTE" : "OFF_ROUTE"),
+          summary: result.summary || ''
+        });
+      } catch (error) {
+        id("routeResults").innerHTML = `
+          <div class="info-banner banner-bad">
+            Failed to run route check. ${escapeHtml(error.message || "Unknown error")}
+          </div>
+        `;
+      } finally {
+        id("routeSpinner").style.display = "none";
+      }
+    }
+
+    // ─── INIT ─────────────────────────────────────────────────────────────────
+
+    function preloadExamples() {
+      renderHistory();
+      syncMapFromZone();
+      syncMapFromRoute();
+    }
+
+    function init() {
+      setTheme(appState.currentTheme);
+      initMap();
+      initRouteMap();
+      preloadExamples();
+      checkHealth();
+      setInterval(checkHealth, 10000);
+    }
+
+    window.addEventListener('DOMContentLoaded', init);
+  </script>
 </body>
 </html>
