@@ -1913,7 +1913,7 @@ async function runZoneCheck() {
       ship_id: result.ship_id,
       type: "Zone check",
       coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
-      distance: `${formatNum(result.distance_to_nearest_land_nm, 2)} NM`,
+      distance: result.distance_to_nearest_land_nm,
       status: result.zone_status,
       summary: result.summary
     });
@@ -2021,7 +2021,7 @@ async function runSlopCheck() {
       ship_id: result.ship_id,
       type: "Slop check",
       coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
-      distance: `${formatNum(result.distance_to_nearest_land_nm, 2)} NM`,
+      distance: result.distance_to_nearest_land_nm,
       status: result.overall_status || (safeArray(result.disposal_assessment)[0]?.allowed ? "PERMITTED" : "NOT PERMITTED"),
       summary: result.summary
     });
