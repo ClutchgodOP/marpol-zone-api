@@ -1882,7 +1882,7 @@ async function runZoneCheck() {
           </div>`;
         addHistoryRecord({
           time: new Date().toLocaleTimeString(),
-          shipid: ship_id,
+          ship_id: result.ship_id,
           type: "Zone check",
           coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
           distance: 0,
@@ -1910,7 +1910,7 @@ async function runZoneCheck() {
 
     addHistoryRecord({
       time: new Date().toLocaleTimeString(),
-      shipid: ship_id,
+      ship_id: result.ship_id,
       type: "Zone check",
       coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
       distance: `${formatNum(result.distance_to_nearest_land_nm, 2)} NM`,
@@ -1991,7 +1991,7 @@ async function runSlopCheck() {
           </div>`;
         addHistoryRecord({
           time: new Date().toLocaleTimeString(),
-          shipid: ship_id,
+          ship_id: result.ship_id,
           type: "Slop check",
           coords: `${formatNum(lat, 4)}, ${formatNum(lon, 4)}`,
           distance: 0,
@@ -2018,7 +2018,7 @@ async function runSlopCheck() {
 
     addHistoryRecord({
       time: new Date().toLocaleTimeString(),
-      shipid: ship_id,
+      ship_id: result.ship_id,
       type: "Slop check",
       coords: `${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}`,
       distance: `${formatNum(result.distance_to_nearest_land_nm, 2)} NM`,
