@@ -3,7 +3,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from app.geo_utils import is_on_land
-from app.models import ComplianceResponse, ShipRequest, SlopCheckRequest
+from app.models import ComplianceResponse, RouteCheckRequest, RouteCheckResponse, ShipRequest, SlopCheckRequest
+from app.route_checker import evaluate_route
 from app.zone_checker import evaluate_ship_zone, evaluate_slop_discharge
 from app.zones import MARPOL_ZONES
 
@@ -75,6 +76,51 @@ async def check_slop(request: SlopCheckRequest) -> Any:
         "summary": result["summary"],
         "metadata": result["metadata"],
     }
+
+@router.post("/check-route", response_model=RouteCheckResponse)
+async def check_route(request: RouteCheckRequest) -> Any:
+    _reject_if_on_land(request.latitude, request.longitude)
+
+    try:
+        result = evaluate_route(
+            ship_id=request.ship_id,
+            lat=request.latitude,
+            lon=request.longitude,
+            origin_port=request.origin_port,
+            origin_lat=request.origin_latitude,
+            origin_lon=request.origin_longitude,
+            destination_port=request.destination_port,
+            destination_lat=request.destination_latitude,
+            destination_lon=request.destination_longitude,
+            corridor_width_nm=request.corridor_width_nm,
+        )
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "ship_id": request.ship_id,
+        "latitude": request.latitude,
+        "longitude": request.longitude,
+        "origin": result["origin"],
+        "destination": result["destination"],
+        "is_on_route": result["is_on_route"],
+        "route_status": result["route_status"],
+        "cross_track_distance_nm": result["cross_track_distance_nm"],
+        "along_track_distance_nm": result["along_track_distance_nm"],
+        "total_route_distance_nm": result["total_route_distance_nm"],
+        "route_progress_percent": result["route_progress_percent"],
+        "corridor_width_nm": result["corridor_width_nm"],
+        "summary": result["summary"],
+    }
+
+
+@router.get("/ports")
+async def list_ports():
+    from app.ports import PORTS
+    return [
+        {"code": code, "name": info["name"], "latitude": info["lat"], "longitude": info["lon"]}
+        for code, info in PORTS.items()
+    ]
 
 
 @router.get("/zones")
