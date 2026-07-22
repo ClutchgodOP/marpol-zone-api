@@ -730,7 +730,8 @@
     }
 
     #map,
-    #routeMap {
+    #routeMap,
+    #slopMap {
       width: 100%;
       min-height: 600px;
       border-radius: 22px;
@@ -1114,7 +1115,8 @@
       }
 
       #map,
-      #routeMap {
+      #routeMap,
+      #slopMap {
         min-height: 420px;
       }
 
@@ -1425,7 +1427,28 @@
             </div>
           </div>
 
-          <div class="panel card">
+          <div class="panel map-card">
+            <div class="map-header">
+              <div>
+                <div class="section-title" style="font-size:1.1rem;">Live position map</div>
+                <div class="map-meta">
+                  Displays the ship's live reported position for the slop / oil-mixed
+                  water discharge check, so operators can visually confirm exactly where
+                  the discharge decision applies.
+                </div>
+              </div>
+
+              <div class="map-toolbar">
+                <button class="mini-btn" onclick="syncSlopMapFromInputs()">Use slop coordinates</button>
+                <button class="mini-btn" onclick="resetSlopMapView()">Reset view</button>
+              </div>
+            </div>
+
+            <div id="slopMap"></div>
+          </div>
+        </div>
+
+        <div class="panel card" style="margin-top: var(--space-6);">
             <div class="section-heading">
               <div>
                 <div class="section-title" style="font-size:1.1rem;">Operator reminder</div>
@@ -1479,7 +1502,6 @@
               </div>
             </div>
           </div>
-        </div>
 
         <div id="slopResults" class="result-stack"></div>
       </section>
@@ -1626,6 +1648,9 @@
       routeDestMarker: null,
       routeShipMarker: null,
       routeLine: null,
+      slopMap: null,
+      slopShipMarker: null,
+      slopShipCircle: null,
       apiStatus: 'checking',
       lastZoneResult: null,
       lastSlopResult: null,
@@ -1663,11 +1688,26 @@
         if (navBtn) navBtn.classList.toggle('active', name === tabName);
       });
 
-      if (tabName === 'route' && appState.routeMap) {
-        setTimeout(() => appState.routeMap.invalidateSize(), 120);
+      // Lazy-initialise the maps that live inside initially-hidden tabs. Creating a
+      // Leaflet map on a display:none (0-sized) container makes setView project
+      // against a zero viewport and throw "Invalid LatLng (NaN, NaN)". Building it
+      // the first time its tab is shown avoids that entirely.
+      if (tabName === 'route') {
+        if (!appState.routeMap) {
+          try { initRouteMap(); } catch (e) { console.error('initRouteMap failed', e); }
+          try { syncMapFromRoute(); } catch (e) {}
+        }
+        setTimeout(() => appState.routeMap && appState.routeMap.invalidateSize(), 120);
       }
-      if ((tabName === 'zone' || tabName === 'slop') && appState.map) {
+      if (tabName === 'zone' && appState.map) {
         setTimeout(() => appState.map.invalidateSize(), 120);
+      }
+      if (tabName === 'slop') {
+        if (!appState.slopMap) {
+          try { initSlopMap(); } catch (e) { console.error('initSlopMap failed', e); }
+          try { syncSlopMapFromInputs(); } catch (e) {}
+        }
+        setTimeout(() => appState.slopMap && appState.slopMap.invalidateSize(), 120);
       }
     }
 
@@ -1712,6 +1752,10 @@
         fillOpacity: 0.15,
         weight: 1.5
       }).addTo(appState.map);
+
+      // Correct size once the container has laid out, so Leaflet never projects
+      // tiles against a 0-sized (hidden-tab) viewport and throws Invalid LatLng.
+      requestAnimationFrame(() => { try { appState.map.invalidateSize({ animate: false }); } catch (e) {} });
     }
 
     function updateShipMarker(lat, lon, label = 'Ship position') {
@@ -1795,6 +1839,101 @@
       }
     }
 
+    // ─── SLOP MAP ───────────────────────────────────────────────────────
+
+    function initSlopMap() {
+      appState.slopMap = L.map('slopMap', { zoomControl: true, attributionControl: true })
+        .setView(appState.initialMap.center, appState.initialMap.zoom);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(appState.slopMap);
+
+      appState.slopShipMarker = L.marker(appState.initialMap.center).addTo(appState.slopMap);
+      appState.slopShipMarker.bindPopup('Oil discharge position');
+
+      appState.slopShipCircle = L.circle(appState.initialMap.center, {
+        radius: 12000,
+        color: '#35c5a7',
+        fillColor: '#35c5a7',
+        fillOpacity: 0.15,
+        weight: 1.5
+      }).addTo(appState.slopMap);
+
+      requestAnimationFrame(() => { try { appState.slopMap.invalidateSize({ animate: false }); } catch (e) {} });
+    }
+
+    function updateSlopMarker(lat, lon, label = 'Oil discharge position') {
+      if (!appState.slopMap || !appState.slopShipMarker || !appState.slopShipCircle) return;
+      const nLat = Number(lat);
+      const nLon = Number(lon);
+      if (Number.isNaN(nLat) || Number.isNaN(nLon)) return;
+      const coords = [nLat, nLon];
+      appState.slopShipMarker.setIcon(new L.Icon.Default());
+      appState.slopShipMarker.setLatLng(coords);
+      appState.slopShipMarker.bindPopup(label);
+      appState.slopShipCircle.setLatLng(coords);
+      appState.slopShipCircle.setStyle({ color: '#35c5a7', fillColor: '#35c5a7' });
+      try {
+        appState.slopMap.invalidateSize({ animate: false });
+        const size = appState.slopMap.getSize();
+        const targetZoom = Math.max(appState.slopMap.getZoom() || 5, 5);
+        if (size && size.x > 0 && size.y > 0) {
+          appState.slopMap.setView(coords, targetZoom, { animate: false });
+        }
+      } catch (mapErr) {
+        console.warn('Slop map update skipped:', mapErr && mapErr.message);
+      }
+    }
+
+    function updateSlopMarkerLand(lat, lon, shipId) {
+      if (!appState.slopMap || !appState.slopShipMarker || !appState.slopShipCircle) return;
+      const nLat = Number(lat);
+      const nLon = Number(lon);
+      if (Number.isNaN(nLat) || Number.isNaN(nLon)) return;
+      const coords = [nLat, nLon];
+      const redIcon = L.divIcon({
+        className: '',
+        html: `<div style="width:28px;height:28px;border-radius:50%;background:#ff5d6c;
+               border:3px solid #fff;box-shadow:0 2px 10px rgba(255,93,108,.6);
+               display:grid;place-items:center;font-size:14px;line-height:1;">⛔</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        popupAnchor: [0, -16]
+      });
+      appState.slopShipMarker.setLatLng(coords);
+      appState.slopShipMarker.setIcon(redIcon);
+      appState.slopShipMarker.bindPopup(
+        `<b style="color:#ff5d6c">⛔ On land</b><br>${escapeHtml(shipId)}<br><small>${lat}, ${lon}</small>`
+      ).openPopup();
+      appState.slopShipCircle.setLatLng(coords);
+      appState.slopShipCircle.setStyle({ color: '#ff5d6c', fillColor: '#ff5d6c' });
+      try {
+        appState.slopMap.invalidateSize({ animate: false });
+        const size = appState.slopMap.getSize();
+        const targetZoom = Math.max(appState.slopMap.getZoom() || 7, 7);
+        if (size && size.x > 0 && size.y > 0) {
+          appState.slopMap.setView(coords, targetZoom, { animate: false });
+        }
+      } catch (mapErr) {
+        console.warn('Slop map update skipped:', mapErr && mapErr.message);
+      }
+    }
+
+    function resetSlopMapView() {
+      if (!appState.slopMap) return;
+      appState.slopMap.setView(appState.initialMap.center, appState.initialMap.zoom);
+    }
+
+    function syncSlopMapFromInputs() {
+      const lat = parseFloat(id('s_lat').value);
+      const lon = parseFloat(id('s_lon').value);
+      if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+        updateSlopMarker(lat, lon, `Slop check position<br>${lat}, ${lon}`);
+      }
+    }
+
     // ─── ROUTE MAP ────────────────────────────────────────────────────────────
 
     function initRouteMap() {
@@ -1816,6 +1955,8 @@
         opacity: 0.95,
         dashArray: '8 10'
       }).addTo(appState.routeMap);
+
+      requestAnimationFrame(() => { try { appState.routeMap.invalidateSize({ animate: false }); } catch (e) {} });
     }
 
     function resetRouteMapView() {
@@ -1879,6 +2020,38 @@
         animate: true,
         duration: 0.8
       });
+    }
+
+    function updateRouteMarkerLand(lat, lon, shipId) {
+      if (!appState.routeMap || !appState.routeShipMarker) return;
+      const nLat = Number(lat);
+      const nLon = Number(lon);
+      if (Number.isNaN(nLat) || Number.isNaN(nLon)) return;
+      const coords = [nLat, nLon];
+      const redIcon = L.divIcon({
+        className: '',
+        html: `<div style="width:28px;height:28px;border-radius:50%;background:#ff5d6c;
+               border:3px solid #fff;box-shadow:0 2px 10px rgba(255,93,108,.6);
+               display:grid;place-items:center;font-size:14px;line-height:1;">⛔</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        popupAnchor: [0, -16]
+      });
+      appState.routeShipMarker.setIcon(redIcon);
+      appState.routeShipMarker.setLatLng(coords);
+      appState.routeShipMarker.bindPopup(
+        `<b style="color:#ff5d6c">⛔ On land</b><br>${escapeHtml(shipId)}<br><small>${lat}, ${lon}</small>`
+      ).openPopup();
+      try {
+        appState.routeMap.invalidateSize({ animate: false });
+        const size = appState.routeMap.getSize();
+        const targetZoom = Math.max(appState.routeMap.getZoom() || 6, 6);
+        if (size && size.x > 0 && size.y > 0) {
+          appState.routeMap.setView(coords, targetZoom, { animate: false });
+        }
+      } catch (mapErr) {
+        console.warn('Route map update skipped:', mapErr && mapErr.message);
+      }
     }
 
     // ─── NORMALIZERS ──────────────────────────────────────────────────────────
@@ -2418,7 +2591,7 @@
         return;
       }
 
-      updateShipMarker(lat, lon, `<strong>${escapeHtml(shipId)}</strong><br>Checking slop… (${lat}, ${lon})`);
+      updateSlopMarker(lat, lon, `<strong>${escapeHtml(shipId)}</strong><br>Checking slop… (${lat}, ${lon})`);
 
       id("slopSpinner").style.display = "inline-block";
       id("slopResults").innerHTML = "";
@@ -2458,7 +2631,7 @@
             );
 
           if (isLandError) {
-            updateShipMarkerLand(lat, lon, shipId);
+            updateSlopMarkerLand(lat, lon, shipId);
             id("slopResults").innerHTML = `
               <div class="info-banner banner-bad">
                 <strong>⛔ Position is on land</strong><br>
@@ -2485,11 +2658,11 @@
         const result = normalizeSlopResponse(data);
         appState.lastSlopResult = result;
 
-        if (appState.shipCircle) {
-          appState.shipCircle.setStyle({ color: "#3d7cff", fillColor: "#3d7cff" });
+        if (appState.slopShipCircle) {
+          appState.slopShipCircle.setStyle({ color: "#35c5a7", fillColor: "#35c5a7" });
         }
 
-        updateShipMarker(result.latitude, result.longitude, `
+        updateSlopMarker(result.latitude, result.longitude, `
           <strong>${escapeHtml(result.ship_id)}</strong><br>
           Slop check<br>
           ${formatNum(result.latitude, 4)}, ${formatNum(result.longitude, 4)}
@@ -2574,6 +2747,7 @@
             );
 
           if (isLandError) {
+            updateRouteMarkerLand(lat, lon, shipId);
             id("routeResults").innerHTML = `
               <div class="info-banner banner-bad">
                 <strong>⛔ Position is on land</strong><br>
@@ -2630,6 +2804,7 @@
       renderHistory();
       syncMapFromZone();
       syncMapFromRoute();
+      syncSlopMapFromInputs();
     }
 
     function init() {
@@ -2637,8 +2812,10 @@
       checkHealth();
       setInterval(checkHealth, 10000);
 
+      // Only the zone map is visible on load, so init it eagerly. The route and
+      // slop maps are created lazily on first tab-show (see showTab) to avoid
+      // initialising Leaflet against a hidden, zero-sized container.
       try { initMap(); } catch (e) { console.error('initMap failed', e); }
-      try { initRouteMap(); } catch (e) { console.error('initRouteMap failed', e); }
       try { preloadExamples(); } catch (e) { console.error('preloadExamples failed', e); }
     }
 
