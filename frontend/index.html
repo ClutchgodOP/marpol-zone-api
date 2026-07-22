@@ -1655,7 +1655,7 @@
       setTheme(appState.currentTheme === 'dark' ? 'light' : 'dark');
     }
 
-    function showTab(tabName) {
+    function showTab(tabName, _btn) {
       ['zone', 'slop', 'route', 'history'].forEach(name => {
         const section = id(`tab-${name}`);
         const navBtn = document.querySelector(`[data-tab-btn="${name}"]`);
@@ -1716,13 +1716,31 @@
 
     function updateShipMarker(lat, lon, label = 'Ship position') {
       if (!appState.map || !appState.shipMarker || !appState.shipCircle) return;
-      const coords = [Number(lat), Number(lon)];
+      const nLat = Number(lat);
+      const nLon = Number(lon);
+      if (Number.isNaN(nLat) || Number.isNaN(nLon)) return;
+      const coords = [nLat, nLon];
       appState.shipMarker.setIcon(new L.Icon.Default());
       appState.shipMarker.setLatLng(coords);
       appState.shipMarker.bindPopup(label);
       appState.shipCircle.setLatLng(coords);
       appState.shipCircle.setStyle({ color: '#3d7cff', fillColor: '#3d7cff' });
-      appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 5), { animate: true, duration: 0.8 });
+      // Guard the map animation: if the map container is hidden/0-sized (e.g. when a
+      // tab was just switched) Leaflet can throw "Invalid LatLng (NaN, NaN)" and abort
+      // the caller. Correct the size first and never let a map error bubble up.
+      try {
+        appState.map.invalidateSize({ animate: false });
+        const size = appState.map.getSize();
+        const targetZoom = Math.max(appState.map.getZoom() || 5, 5);
+        // Use a non-animated setView: an animated flyTo projects against the
+        // viewport across several frames and throws "Invalid LatLng (NaN, NaN)"
+        // if the map container is momentarily 0-sized after a tab switch.
+        if (size && size.x > 0 && size.y > 0) {
+          appState.map.setView(coords, targetZoom, { animate: false });
+        }
+      } catch (mapErr) {
+        console.warn('Map update skipped:', mapErr && mapErr.message);
+      }
     }
 
     function updateShipMarkerLand(lat, lon, shipId) {
@@ -1744,7 +1762,16 @@
       ).openPopup();
       appState.shipCircle.setLatLng(coords);
       appState.shipCircle.setStyle({ color: '#ff5d6c', fillColor: '#ff5d6c' });
-      appState.map.flyTo(coords, Math.max(appState.map.getZoom(), 7), { animate: true, duration: 0.8 });
+      try {
+        appState.map.invalidateSize({ animate: false });
+        const size = appState.map.getSize();
+        const targetZoom = Math.max(appState.map.getZoom() || 7, 7);
+        if (size && size.x > 0 && size.y > 0) {
+          appState.map.setView(coords, targetZoom, { animate: false });
+        }
+      } catch (mapErr) {
+        console.warn('Map update skipped:', mapErr && mapErr.message);
+      }
     }
 
     function resetMapView() {
