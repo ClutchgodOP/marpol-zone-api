@@ -2,7 +2,9 @@
 from shapely.geometry import Polygon
 
 # --- MARPOL ANNEX ZONE REGISTRY ---
-# Each zone: { name, annex, polygon(s), restriction_type }
+# Each zone: { zone_id, name, annex, type, restriction, polygon }
+# Optional keys (carried by the 2026 Annex VI ECAs): effective_date,
+# enforcement_date, guidance, source.
 
 MARPOL_ZONES = [
 
@@ -324,11 +326,119 @@ MARPOL_ZONES = [
         ])
     },
 
-    # NOTE — not yet modeled here, tracked for a future update:
-    # The Canadian Arctic and Norwegian Sea were designated ECAs under
-    # MARPOL Annex VI (MEPC.392(82)), entering into force 1 March 2026 with
-    # compliance requirements phasing in through 1 March 2027. Add these once
-    # official boundary coordinates (Annex VI Appendix VII) are sourced.
-    # A North-East Atlantic ECA has been proposed (MEPC 83) but is not yet
-    # adopted — do not add until formally in force.
+    # ───────────── ANNEX VI — 2026 ECAs designated by MEPC.392(82) ─────────────
+    #
+    # IMO Resolution MEPC.392(82), adopted at MEPC 82 (October 2024), designated
+    # the Canadian Arctic and the Norwegian Sea as Emission Control Areas for
+    # NOx, SOx and PM. The amendments entered into force on 1 March 2026.
+    #
+    # Sources:
+    #   MEPC.392(82) full text:
+    #     https://wwwcdn.imo.org/localresources/en/OurWork/Environment/Documents/MEPC.392(82).pdf
+    #   DNV advisory:
+    #     https://www.dnv.com/news/2025/new-ecas-for-the-canadian-arctic-norwegian-sea-and-north-east-atlantic-ocean/
+    #   Lloyd's Register Class News 05/2025:
+    #     https://www.lr.org/en/knowledge/class-news/05-25/
+    #   ABS ECA overview:
+    #     https://ww2.eagle.org/en/rules-and-resources/regulatory-updates/emission-control-areas.html
+
+    {
+        "zone_id": "ANNEX6_CANADIAN_ARCTIC_ECA",
+        "name": "Canadian Arctic ECA",
+        "annex": "VI",
+        "type": "Air Pollution (SOx/NOx ECA)",
+        "restriction": (
+            "Fuel oil sulphur content must not exceed 0.10% m/m (or an approved "
+            "equivalent such as an EGCS); the 0.10% limit becomes enforceable "
+            "1 March 2027 after the 12-month grace period of Reg 14.7. NOx Tier III "
+            "required for marine diesel engines > 130 kW on ships with keel laid on "
+            "or after 1 January 2025."
+        ),
+        "effective_date": "2026-03-01",
+        "enforcement_date": "2027-03-01",
+        "guidance": (
+            "Canadian Arctic ECA (MEPC.392(82)), in force 1 March 2026. SOx/PM: use "
+            "fuel oil of 0.10% m/m sulphur content or less, or an approved equivalent "
+            "(e.g. exhaust gas cleaning system); the 0.10% m/m limit is enforceable "
+            "from 1 March 2027 following the standard 12-month grace period "
+            "(MARPOL Annex VI Reg 14.7) — the area is designated from 1 March 2026 but "
+            "the sulphur limit is not mandatory before that date. NOx: Tier III "
+            "certification applies to marine diesel engines with power output above "
+            "130 kW installed on ships whose keel was laid on or after 1 January 2025, "
+            "when those ships operate in the ECA on or after 1 March 2026 "
+            "(MARPOL Annex VI Reg 13, as amended). Carry a bunker delivery note and "
+            "record fuel changeover times and tank positions in the ORB/logbook."
+        ),
+        "source": "IMO Resolution MEPC.392(82), Annex VI Appendix VII",
+        # SIMPLIFIED geometry. The authoritative boundary is listed in Appendix VII
+        # of MARPOL Annex VI as amended by MEPC.392(82): from the Yukon mainland at
+        # 68°54'N 137°00'W (the 137th meridian west in the Beaufort Sea) eastward
+        # across the Canadian Arctic Archipelago, past Hans Island (80°49'N 66°27'W),
+        # and south through Baffin Bay/Davis Strait to the Newfoundland and Labrador
+        # coast at 60°00'N 64°09.6'W. The polygon below is a coarse envelope of
+        # Canadian Arctic waters bounded west at 137°W and south at 60°N — adequate
+        # for advisory zone screening, NOT for legal boundary determination.
+        "polygon": Polygon([
+            (-137.0, 68.9),   # Yukon mainland, 68°54'N 137°00'W (Beaufort Sea)
+            (-137.0, 72.5),   # north along the 137th meridian west
+            (-125.0, 76.5),   # Amundsen Gulf / M'Clure Strait approaches
+            (-110.0, 80.5),   # Queen Elizabeth Islands
+            (-95.0, 83.5),    # northern limit above the Arctic Archipelago
+            (-66.45, 80.82),  # Hans Island, 80°49'N 66°27'W
+            (-55.0, 68.0),    # Baffin Bay eastern limit
+            (-55.0, 60.0),    # Davis Strait / Labrador Sea, south limit 60°N
+            (-64.16, 60.0),   # Labrador coast, 60°00'N 64°09.6'W
+            (-95.0, 62.0),    # Hudson Strait / Foxe Basin approaches
+            (-125.0, 66.0),   # Mackenzie Delta approaches
+            (-137.0, 68.9),
+        ]),
+    },
+    {
+        "zone_id": "ANNEX6_NORWEGIAN_SEA_ECA",
+        "name": "Norwegian Sea ECA",
+        "annex": "VI",
+        "type": "Air Pollution (SOx/NOx ECA)",
+        "restriction": (
+            "Fuel oil sulphur content must not exceed 0.10% m/m (or an approved "
+            "equivalent such as an EGCS); the 0.10% limit becomes enforceable "
+            "1 March 2027 after the 12-month grace period of Reg 14.7. NOx Tier III "
+            "required for engines > 130 kW under the three-date principle: building "
+            "contract on/after 1 March 2026, or keel laid on/after 1 September 2026 "
+            "absent a contract, or delivery on/after 1 March 2030."
+        ),
+        "effective_date": "2026-03-01",
+        "enforcement_date": "2027-03-01",
+        "guidance": (
+            "Norwegian Sea ECA (MEPC.392(82)), in force 1 March 2026, covering the "
+            "Norwegian Exclusive Economic Zone north of 62°N including fjords and "
+            "coastal waters. SOx/PM: use fuel oil of 0.10% m/m sulphur content or "
+            "less, or an approved equivalent (e.g. exhaust gas cleaning system); the "
+            "0.10% m/m limit is enforceable from 1 March 2027 after the 12-month "
+            "grace period (MARPOL Annex VI Reg 14.7). NOx: Tier III applies to "
+            "engines with power output above 130 kW under the three-date principle — "
+            "(a) building contract placed on or after 1 March 2026, or (b) in the "
+            "absence of a building contract, keel laid on or after 1 September 2026, "
+            "or (c) delivery on or after 1 March 2030. Note the Norwegian EEZ south "
+            "of 62°N was already covered by the North Sea ECA, so the entire "
+            "Norwegian coast is now continuous ECA."
+        ),
+        "source": "IMO Resolution MEPC.392(82), Annex VI Appendix VII",
+        # SIMPLIFIED geometry: coarse envelope of the Norwegian EEZ north of 62°N.
+        # The southern edge is the 62°N parallel (the hand-off to the pre-existing
+        # North Sea ECA); the eastern edge approximates the Norwegian/Russian
+        # maritime boundary in the Barents Sea. Not a legal boundary.
+        "polygon": Polygon([
+            (-1.0, 62.0),   # western limit of the EEZ on the 62°N parallel
+            (12.0, 62.0),   # 62°N parallel eastward across the Norwegian coast
+            (20.0, 68.5),   # inland of the Lofoten/Troms coast (fjords included)
+            (32.1, 70.3),   # Norwegian/Russian maritime boundary, Varanger area
+            (32.1, 74.5),   # Barents Sea northern limit
+            (10.0, 76.0),   # Norwegian Sea northern limit
+            (-1.0, 72.0),   # western limit
+            (-1.0, 62.0),
+        ]),
+    },
+
+    # NOTE — A North-East Atlantic ECA has been proposed (MEPC 83) but is not yet
+    # adopted; do not add until formally in force.
 ]

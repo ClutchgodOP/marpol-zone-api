@@ -1,20 +1,33 @@
 import os
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
+from app.problem_details import register_exception_handlers
 from app.routers.check_zone import router as check_zone_router
+from app.spatial_index import index_stats
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+STATIC_DIR = PROJECT_ROOT / "static"
+INDEX_HTML = PROJECT_ROOT / "index.html"
 
 app = FastAPI(
     title="Volteo Maritime MARPOL Compliance API",
     description=(
         "Checks whether ship coordinates fall inside MARPOL special areas, "
         "estimates distance to nearest land, and returns disposal guidance "
-        "and operational compliance checklists across supported annexes."
+        "and operational compliance checklists across supported annexes. "
+        "Errors are returned as RFC 7807 application/problem+json documents."
     ),
     version="2.0.0",
 )
+
+# Registered before the routers so that ProblemException, RequestValidationError
+# and unhandled exceptions all render as problem+json.
+register_exception_handlers(app)
 
 origins = [
     "http://127.0.0.1:3000",
@@ -32,6 +45,9 @@ _prod_origin = os.getenv("ALLOWED_ORIGIN")
 if _prod_origin:
     origins.append(_prod_origin)
 
+# The dashboard is served from this same origin (the "/" and /static routes
+# below), so CORS only matters for development against a separately served
+# frontend and for the deployed dashboard hosts listed above.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -42,6 +58,9 @@ app.add_middleware(
 
 app.include_router(check_zone_router)
 
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 @app.get("/health")
 async def health():
@@ -49,9 +68,13 @@ async def health():
         "status": "ok",
         "service": "Volteo Maritime MARPOL Compliance API",
         "version": "2.0.0",
+        "spatial_index": index_stats(),
     }
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 async def root():
+    """Serve the dashboard when it is present, otherwise fall back to the docs."""
+    if INDEX_HTML.is_file():
+        return FileResponse(str(INDEX_HTML), media_type="text/html")
     return RedirectResponse(url="/docs")

@@ -3,6 +3,12 @@ from typing import List, Tuple
 
 from shapely.geometry import Point
 
+from app.problem_details import (
+    TYPE_INVALID_COORDINATES,
+    TYPE_INVALID_ROUTE,
+    ProblemException,
+)
+
 try:
     from global_land_mask import globe as _globe
     _USE_GLOBE = True
@@ -12,8 +18,38 @@ except ImportError:
 
 
 def point_in_polygon(lat: float, lon: float, polygon) -> bool:
+    """Boundary-inclusive test against one polygon.
+
+    Retained for backward compatibility and for callers that already hold a
+    specific polygon. Multi-zone lookups must go through ``app.spatial_index``,
+    which prunes candidates with an R-tree instead of testing every zone.
+    """
     ship_point = Point(lon, lat)
     return polygon.contains(ship_point) or polygon.touches(ship_point)
+
+
+def validate_coordinates(lat: float, lon: float, label: str = "position") -> None:
+    """Raise an RFC 7807 problem if a coordinate pair is non-finite or out of range."""
+    for value, name, limit in ((lat, "latitude", 90.0), (lon, "longitude", 180.0)):
+        if value is None or value != value:  # NaN is the only value != itself
+            raise ProblemException(
+                status=422,
+                title="Invalid coordinates",
+                detail=f"The {label} {name} must be a finite number.",
+                problem_type=TYPE_INVALID_COORDINATES,
+                extensions={"field": name, "value": value},
+            )
+        if not -limit <= value <= limit:
+            raise ProblemException(
+                status=422,
+                title="Invalid coordinates",
+                detail=(
+                    f"The {label} {name} must be between -{limit:g} and {limit:g} "
+                    f"degrees; received {value}."
+                ),
+                problem_type=TYPE_INVALID_COORDINATES,
+                extensions={"field": name, "value": value},
+            )
 
 
 def haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -160,8 +196,43 @@ def route_deviation_check(
       2. Its along-track projection falls between 0 and the total route
          distance (i.e. it's actually between origin and destination, not
          way before departure or way past arrival).
+
+    Raises ``ProblemException`` (rendered as RFC 7807 application/problem+json)
+    when the inputs cannot describe a route: out-of-range coordinates, a
+    non-positive corridor width, or a degenerate origin == destination leg.
     """
+    validate_coordinates(lat, lon, "ship")
+    validate_coordinates(origin_lat, origin_lon, "origin")
+    validate_coordinates(dest_lat, dest_lon, "destination")
+
+    if corridor_width_nm is None or corridor_width_nm <= 0:
+        raise ProblemException(
+            status=422,
+            title="Invalid route corridor",
+            detail=(
+                "The route corridor width must be greater than 0 NM; "
+                f"received {corridor_width_nm}."
+            ),
+            problem_type=TYPE_INVALID_ROUTE,
+            extensions={"field": "corridor_width_nm", "value": corridor_width_nm},
+        )
+
     total_route_nm = haversine_nm(origin_lat, origin_lon, dest_lat, dest_lon)
+
+    if total_route_nm == 0:
+        raise ProblemException(
+            status=422,
+            title="Degenerate route",
+            detail=(
+                "Origin and destination resolve to the same position "
+                f"({origin_lat}, {origin_lon}); a route requires two distinct points."
+            ),
+            problem_type=TYPE_INVALID_ROUTE,
+            extensions={
+                "origin": {"latitude": origin_lat, "longitude": origin_lon},
+                "destination": {"latitude": dest_lat, "longitude": dest_lon},
+            },
+        )
 
     cross_track_nm = cross_track_distance_nm(
         lat, lon, origin_lat, origin_lon, dest_lat, dest_lon
@@ -193,3 +264,44 @@ def route_deviation_check(
         "within_route_span": within_route_span,
         "corridor_width_nm": corridor_width_nm,
     }
+
+
+def great_circle_points(
+    origin_lat: float, origin_lon: float,
+    dest_lat: float, dest_lon: float,
+    segments: int = 64,
+) -> List[List[float]]:
+    """Sample the great-circle track as ``segments + 1`` [lat, lon] pairs.
+
+    Spherical linear interpolation (slerp) on the unit sphere, so the samples
+    follow the true geodesic rather than the straight line a naive lat/lon
+    interpolation would draw on a Mercator map. Consumed by the frontend for the
+    route polyline and by the spatial index for route-segment zone screening.
+    """
+    segments = max(1, int(segments))
+    phi1, lambda1 = radians(origin_lat), radians(origin_lon)
+    phi2, lambda2 = radians(dest_lat), radians(dest_lon)
+
+    angular = 2 * asin(
+        min(1.0, sqrt(
+            sin((phi2 - phi1) / 2) ** 2
+            + cos(phi1) * cos(phi2) * sin((lambda2 - lambda1) / 2) ** 2
+        ))
+    )
+
+    if angular == 0:
+        return [[origin_lat, origin_lon], [dest_lat, dest_lon]]
+
+    points: List[List[float]] = []
+    for step in range(segments + 1):
+        fraction = step / segments
+        a = sin((1 - fraction) * angular) / sin(angular)
+        b = sin(fraction * angular) / sin(angular)
+        x = a * cos(phi1) * cos(lambda1) + b * cos(phi2) * cos(lambda2)
+        y = a * cos(phi1) * sin(lambda1) + b * cos(phi2) * sin(lambda2)
+        z = a * sin(phi1) + b * sin(phi2)
+        points.append([
+            round(degrees(atan2(z, sqrt(x * x + y * y))), 6),
+            round(degrees(atan2(y, x)), 6),
+        ])
+    return points

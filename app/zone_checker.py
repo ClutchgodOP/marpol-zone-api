@@ -1,8 +1,8 @@
 from collections import defaultdict
 from typing import Dict, List, Optional
 
-from app.geo_utils import nearest_land_distance_nm, point_in_polygon
-from app.zones import MARPOL_ZONES
+from app.geo_utils import nearest_land_distance_nm
+from app.spatial_index import query_zones_at_point, query_zones_on_path
 
 
 SUPPORTED_WASTE_TYPES = [
@@ -14,27 +14,35 @@ SUPPORTED_WASTE_TYPES = [
 ]
 
 
+def _as_violation(zone: Dict) -> Dict:
+    violation = {
+        "zone_id": zone["zone_id"],
+        "zone_name": zone["name"],
+        "annex": zone["annex"],
+        "waste_type": zone["type"],
+        "restriction": zone["restriction"],
+    }
+    for optional_key in ("effective_date", "enforcement_date", "guidance", "source"):
+        if zone.get(optional_key):
+            violation[optional_key] = zone[optional_key]
+    return violation
+
+
 def check_all_zones(lat: float, lon: float) -> List[Dict]:
     """
     Return all MARPOL zones containing the given ship position.
     A ship may be inside multiple zones across multiple annexes.
+    Backed by the STRtree spatial index (see app.spatial_index).
     """
-    violations = []
+    return [_as_violation(zone) for zone in query_zones_at_point(lat, lon)]
 
-    for zone in MARPOL_ZONES:
-        polygon = zone["polygon"]
-        if point_in_polygon(lat, lon, polygon):
-            violations.append(
-                {
-                    "zone_id": zone["zone_id"],
-                    "zone_name": zone["name"],
-                    "annex": zone["annex"],
-                    "waste_type": zone["type"],
-                    "restriction": zone["restriction"],
-                }
-            )
 
-    return violations
+def check_zones_along_path(points: List[List[float]]) -> List[Dict]:
+    """
+    Return all MARPOL zones crossed by a (lat, lon) path, each listed once.
+    Backed by the same spatial index as the point query.
+    """
+    return [_as_violation(zone) for zone in query_zones_on_path(points)]
 
 
 def filter_active_zones(

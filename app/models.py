@@ -35,6 +35,12 @@ class ZoneViolation(BaseModel):
     annex: str
     waste_type: str
     restriction: str
+    # Present on zones that carry regulatory dates (the 2026 Annex VI ECAs
+    # designated by MEPC.392(82)); null for the older registry entries.
+    effective_date: Optional[str] = None
+    enforcement_date: Optional[str] = None
+    guidance: Optional[str] = None
+    source: Optional[str] = None
 
 
 class AnnexSummary(BaseModel):
@@ -110,3 +116,30 @@ class RouteCheckResponse(BaseModel):
     route_progress_percent: float
     corridor_width_nm: float
     summary: str
+    # Sampled great-circle track ([lat, lon] pairs) for map rendering, plus the
+    # MARPOL special areas that track crosses.
+    route_points: List[List[float]] = Field(default_factory=list)
+    zones_crossed: List[ZoneViolation] = Field(default_factory=list)
+
+
+class ProblemDetail(BaseModel):
+    """RFC 7807 problem document. Documents the error shape in the OpenAPI schema;
+    responses are produced by app.problem_details, not by this model."""
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "type": "https://volteo-maritime.example/problems/coordinates-on-land",
+                "title": "Coordinates are on land",
+                "status": 400,
+                "detail": "Coordinates (28.6139, 77.209) are on land. Please provide valid sea coordinates.",
+                "instance": "/api/v1/check-zone",
+            }
+        }
+    }
+
+    type: str
+    title: str
+    status: int
+    detail: str
+    instance: str

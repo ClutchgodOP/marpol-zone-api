@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.conftest import assert_problem
 
 client = TestClient(app)
 
@@ -28,6 +29,12 @@ def test_ship_on_route_visakhapatnam_to_singapore():
     assert data["route_status"] == "ON_ROUTE"
     assert data["is_on_route"] is True
 
+    # Sampled geodesic for the frontend polyline, plus the zones it crosses.
+    assert len(data["route_points"]) == 65
+    assert data["route_points"][0] == [17.6868, 83.2185]
+    assert data["route_points"][-1] == [1.2644, 103.82]
+    assert isinstance(data["zones_crossed"], list)
+
 
 def test_ship_off_route_delhi_not_at_sea():
     # Delhi is inland — should be rejected as on-land before route logic even runs
@@ -41,7 +48,8 @@ def test_ship_off_route_delhi_not_at_sea():
             "destination_port": "SINGAPORE",
         },
     )
-    assert res.status_code == 400
+    problem = assert_problem(res, 400, "/coordinates-on-land")
+    assert problem["latitude"] == 28.6139
 
 
 def test_ship_off_route_wrong_sea_area():
@@ -90,7 +98,73 @@ def test_missing_route_info_returns_400():
             "longitude": 90.0,
         },
     )
-    assert res.status_code == 400
+    problem = assert_problem(res, 400, "/invalid-route-definition")
+    assert problem["field"] == "origin_port"
+
+
+def test_unknown_port_returns_problem_json():
+    res = client.post(
+        "/api/v1/check-route",
+        json={
+            "ship_id": "ROUTE_06",
+            "latitude": 8.5,
+            "longitude": 90.0,
+            "origin_port": "ATLANTIS",
+            "destination_port": "SINGAPORE",
+        },
+    )
+    problem = assert_problem(res, 400, "/port-not-found")
+    assert problem["value"] == "ATLANTIS"
+
+
+def test_degenerate_route_returns_problem_json():
+    res = client.post(
+        "/api/v1/check-route",
+        json={
+            "ship_id": "ROUTE_07",
+            "latitude": 8.5,
+            "longitude": 90.0,
+            "origin_port": "SINGAPORE",
+            "destination_port": "SINGAPORE",
+        },
+    )
+    assert_problem(res, 422, "/invalid-route-definition")
+
+
+def test_corridor_width_out_of_range_returns_problem_json():
+    res = client.post(
+        "/api/v1/check-route",
+        json={
+            "ship_id": "ROUTE_08",
+            "latitude": 8.5,
+            "longitude": 90.0,
+            "origin_port": "VISAKHAPATNAM",
+            "destination_port": "SINGAPORE",
+            "corridor_width_nm": 0,
+        },
+    )
+    problem = assert_problem(res, 422, "/request-validation-error")
+    assert any("corridor_width_nm" in error["field"] for error in problem["errors"])
+
+
+def test_route_crossing_mediterranean_reports_zones_crossed():
+    res = client.post(
+        "/api/v1/check-route",
+        json={
+            "ship_id": "ROUTE_09",
+            "latitude": 37.5,
+            "longitude": 5.0,
+            "origin_latitude": 36.0,
+            "origin_longitude": -8.0,
+            "destination_latitude": 34.0,
+            "destination_longitude": 20.0,
+            "corridor_width_nm": 200,
+        },
+    )
+    assert res.status_code == 200
+    assert "ANNEX1_MEDITERRANEAN" in {
+        zone["zone_id"] for zone in res.json()["zones_crossed"]
+    }
 
 
 def test_list_ports_endpoint():
