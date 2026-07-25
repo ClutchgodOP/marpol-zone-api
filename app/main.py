@@ -74,7 +74,14 @@ async def health():
 
 @app.get("/", include_in_schema=False)
 async def root():
-    """Serve the dashboard when it is present, otherwise fall back to the docs."""
+    """The API root shows the interactive Swagger UI; the dashboard is hosted
+    separately (Vercel) and also remains available here at /dashboard."""
+    return RedirectResponse(url="/docs")
+
+
+@app.get("/dashboard", include_in_schema=False)
+async def dashboard():
+    """Serve the bundled dashboard (useful for local development)."""
     if INDEX_HTML.is_file():
         return FileResponse(str(INDEX_HTML), media_type="text/html")
     return RedirectResponse(url="/docs")

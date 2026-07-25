@@ -23,11 +23,19 @@
 
 /* ─────────────────────────────── config ─────────────────────────────── */
 
-// Same-origin by default (FastAPI serves index.html and /static), falling back
-// to the conventional local uvicorn port when the page is opened from file://.
+// Deployed backend (Railway). The dashboard itself is hosted separately
+// (Vercel / static hosting), so any non-local origin defaults to this API.
+const RAILWAY_API = 'https://volteo-maritime-marpol-zone-api.up.railway.app';
+
+// Same-origin when developing locally (uvicorn serves index.html and /static);
+// otherwise default to the deployed Railway API. The #apiBase input still
+// overrides this at runtime.
 const API_BASE = (() => {
   const origin = window.location.origin;
-  return origin && origin.startsWith('http') ? origin : 'http://localhost:8000';
+  const isHttp = origin && origin.startsWith('http');
+  const isLocal = isHttp && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  if (isLocal || origin === RAILWAY_API) return origin;
+  return RAILWAY_API;
 })();
 
 const ENDPOINTS = {
