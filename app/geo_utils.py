@@ -128,6 +128,19 @@ def along_track_distance_nm(
     cos_ratio = max(-1.0, min(1.0, cos_ratio))
 
     d_at = acos(cos_ratio) * EARTH_RADIUS_NM
+
+    # acos() only ever returns a magnitude in [0, pi] — it cannot on its own
+    # distinguish a point that projects AHEAD of the origin (toward the
+    # destination) from one that projects BEHIND it (before departure).
+    # Recover the sign by comparing the bearing to the point against the
+    # bearing to the destination: if they differ by more than 90 degrees,
+    # the point sits behind the origin, so along-track distance is negative.
+    theta13 = radians(initial_bearing_deg(origin_lat, origin_lon, lat, lon))
+    theta12 = radians(initial_bearing_deg(origin_lat, origin_lon, dest_lat, dest_lon))
+    bearing_diff = (theta13 - theta12 + pi) % (2 * pi) - pi  # normalize to [-pi, pi]
+    if abs(bearing_diff) > pi / 2:
+        d_at = -d_at
+
     return d_at
 
 

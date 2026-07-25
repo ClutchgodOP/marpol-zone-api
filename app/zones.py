@@ -1,6 +1,5 @@
 # app/zones.py
-from shapely.geometry import Polygon, MultiPolygon
-from shapely.ops import unary_union
+from shapely.geometry import Polygon
 
 # --- MARPOL ANNEX ZONE REGISTRY ---
 # Each zone: { name, annex, polygon(s), restriction_type }
@@ -15,13 +14,18 @@ MARPOL_ZONES = [
         "annex": "I",
         "type": "Oil",
         "restriction": "No oil discharge allowed",
-        # Bounding box approximation: 41°N south limit, 5°36'W west limit
+        # Bounding box approximation: 30°N south limit, 5°36'W west limit.
+        # NOTE: 41°N is only the Black Sea hand-off point (see ANNEX1_BLACKSEA);
+        # the Mediterranean Sea itself extends south to ~30°N (Libya/Egypt/Crete).
+        # This box previously used 41.0 as the south limit, which excluded most
+        # of the central and southern Mediterranean. Kept in sync with
+        # ANNEX5_MEDITERRANEAN below, which already used the correct 30.0.
         "polygon": Polygon([
-            (-5.6, 41.0),   # Gibraltar (W boundary at 5°36'W)
+            (-5.6, 30.0),   # SW corner (Gibraltar meridian, south limit)
             (-5.6, 46.0),   # NW corner
             (36.0, 46.0),   # NE corner
-            (36.0, 41.0),   # Black Sea boundary at 41°N
-            (-5.6, 41.0)
+            (36.0, 30.0),   # SE corner
+            (-5.6, 30.0)
         ])
     },
     {
@@ -274,6 +278,24 @@ MARPOL_ZONES = [
         ])
     },
     {
+        "zone_id": "ANNEX6_MEDITERRANEAN_SOX",
+        "name": "Mediterranean Sea SOx/PM ECA",
+        "annex": "VI",
+        "type": "Air Pollution (SOx/NOx ECA)",
+        "restriction": "Fuel sulphur ≤ 0.10% (in force since 1 May 2025, MEPC.261(79))",
+        # Bounding box approximation reusing the Mediterranean Sea extent above.
+        # NOTE: verify against the official MEPC.261(79) coordinates if precise
+        # boundary compliance is required — this is a rectangular approximation
+        # consistent with the other zones in this registry.
+        "polygon": Polygon([
+            (-5.6, 30.0),
+            (-5.6, 46.0),
+            (36.0, 46.0),
+            (36.0, 30.0),
+            (-5.6, 30.0)
+        ])
+    },
+    {
         "zone_id": "ANNEX6_NORTH_AMERICA_ECA",
         "name": "North American ECA",
         "annex": "VI",
@@ -301,4 +323,12 @@ MARPOL_ZONES = [
             (-90.0, 8.0)
         ])
     },
+
+    # NOTE — not yet modeled here, tracked for a future update:
+    # The Canadian Arctic and Norwegian Sea were designated ECAs under
+    # MARPOL Annex VI (MEPC.392(82)), entering into force 1 March 2026 with
+    # compliance requirements phasing in through 1 March 2027. Add these once
+    # official boundary coordinates (Annex VI Appendix VII) are sourced.
+    # A North-East Atlantic ECA has been proposed (MEPC 83) but is not yet
+    # adopted — do not add until formally in force.
 ]
