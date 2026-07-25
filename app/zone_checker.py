@@ -188,23 +188,32 @@ def evaluate_ship_zone(
 
     distance_nm = nearest_land_distance_nm(lat, lon)
     in_special_area = len(active_zones) > 0
-    zone_status = "RESTRICTED" if in_special_area else "SAFE"
+    nearest_land_rule_satisfied = distance_nm >= 12
+
+    # zone_status is the overall location-compliance verdict returned to the
+    # frontend (and stored verbatim into request history). It must reflect
+    # BOTH rules: no special area AND at least 12 NM from nearest land.
+    # Previously this only checked `in_special_area`, which meant a ship
+    # under 12 NM from land in open water was incorrectly reported as SAFE.
+    zone_status = (
+        "SAFE" if (not in_special_area and nearest_land_rule_satisfied) else "RESTRICTED"
+    )
 
     annex_summary = build_annex_summary(active_zones)
     disposal_assessment = build_disposal_assessment(active_zones, distance_nm)
     rules_checklist = build_zone_rules(active_zones, distance_nm)
 
-    if zone_status == "SAFE":
-        if distance_nm >= 12:
-            summary = (
-                "Ship is outside all registered MARPOL special areas and is at least "
-                "12 NM from nearest land."
-            )
-        else:
-            summary = (
-                "Ship is outside all registered MARPOL special areas, but it is less "
-                "than 12 NM from nearest land."
-            )
+    if not in_special_area and nearest_land_rule_satisfied:
+        summary = (
+            "Ship is outside all registered MARPOL special areas and is at least "
+            "12 NM from nearest land."
+        )
+    elif not in_special_area and not nearest_land_rule_satisfied:
+        summary = (
+            "Ship is outside all registered MARPOL special areas, but it is less "
+            "than 12 NM from nearest land. Discharge remains restricted under the "
+            "12 NM rule."
+        )
     else:
         summary = (
             f"Ship is inside {len(active_zones)} MARPOL restricted zone(s). "
@@ -214,7 +223,7 @@ def evaluate_ship_zone(
     return {
         "evaluation_type": "zone_check",
         "distance_to_nearest_land_nm": distance_nm,
-        "nearest_land_rule_satisfied": distance_nm >= 12,
+        "nearest_land_rule_satisfied": nearest_land_rule_satisfied,
         "in_special_area": in_special_area,
         "zone_status": zone_status,
         "active_zones": active_zones,
@@ -238,8 +247,10 @@ def evaluate_slop_discharge(
     active_oil_zones = [
         zone for zone in check_all_zones(lat, lon) if zone["waste_type"] == "Oil"
     ]
+
     distance_nm = nearest_land_distance_nm(lat, lon)
     in_special_area = len(active_oil_zones) > 0
+    nearest_land_rule_satisfied = distance_nm >= 12
 
     rules_checklist = [
         {
@@ -257,7 +268,7 @@ def evaluate_slop_discharge(
         {
             "rule_code": "DISTANCE_12NM",
             "rule_name": "Distance from nearest land at least 12 NM",
-            "passed": distance_nm >= 12,
+            "passed": nearest_land_rule_satisfied,
             "actual_value": f"{distance_nm:.2f} NM",
             "required_value": ">= 12.00 NM",
             "note": "For slop discharge, the vessel should be at least 12 NM from nearest land."
@@ -298,12 +309,19 @@ def evaluate_slop_discharge(
 
     all_passed = all(rule["passed"] for rule in rules_checklist)
 
+    # Same fix as evaluate_ship_zone: zone_status must factor in the 12 NM
+    # rule, not just special-area membership, so it can never read SAFE
+    # while the vessel is under 12 NM from nearest land.
+    zone_status = (
+        "SAFE" if (not in_special_area and nearest_land_rule_satisfied) else "RESTRICTED"
+    )
+
     return {
         "evaluation_type": "slop_check",
         "distance_to_nearest_land_nm": distance_nm,
-        "nearest_land_rule_satisfied": distance_nm >= 12,
+        "nearest_land_rule_satisfied": nearest_land_rule_satisfied,
         "in_special_area": in_special_area,
-        "zone_status": "SAFE" if not in_special_area else "RESTRICTED",
+        "zone_status": zone_status,
         "active_zones": active_oil_zones,
         "annex_summary": build_annex_summary(active_oil_zones),
         "disposal_assessment": [
