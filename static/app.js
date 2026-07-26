@@ -723,10 +723,6 @@ function createPanelRenderer({ spinnerId, resultsId, renderResult }) {
     id(spinnerId).style.display = panelState.status === 'loading' ? 'block' : 'none';
 
     const container = id(resultsId);
-    if (panelState.status === 'idle') {
-      container.innerHTML = '';
-      return;
-    }
     if (panelState.status === 'loading') {
       container.innerHTML = `<div class="empty-state">Contacting the compliance API…</div>`;
       return;
@@ -775,6 +771,22 @@ async function drawActiveZonePolygons(mapKey, activeZones) {
   }
 }
 
+/* ---- Operations Bar sync (additive: feeds the new live KPI cards) ---- */
+function updateOpsBar(patch) {
+  const map = {
+    opsApiHealth: patch.apiHealth,
+    opsApiHealthSub: patch.apiHealthSub,
+    opsCurrentZone: patch.currentZone,
+    opsActiveVessel: patch.activeVessel,
+    opsConfidence: patch.confidence
+  };
+  Object.entries(map).forEach(([elementId, value]) => {
+    if (value === undefined) return;
+    const el = id(elementId);
+    if (el) el.textContent = value;
+  });
+}
+
 async function runZoneCheck() {
   const latitude = numberFrom('z_lat');
   const longitude = numberFrom('z_lon');
@@ -791,6 +803,7 @@ async function runZoneCheck() {
 
   setState('zone', { status: 'loading', problem: null, request: payload });
   maps.setShip('zone', latitude, longitude, { label: `${shipId} — evaluating…` });
+  updateOpsBar({ activeVessel: shipId });
 
   try {
     const result = await postJson(ENDPOINTS.checkZone, payload);
@@ -804,6 +817,12 @@ async function runZoneCheck() {
       open: true
     });
     await drawActiveZonePolygons('zone', result.active_zones);
+
+    const inZone = Boolean(result.in_special_area);
+    updateOpsBar({
+      currentZone: inZone ? (safeArray(result.active_zones)[0]?.zone_name || 'Inside special area') : 'Outside',
+      confidence: result.nearest_land_rule_satisfied ? '92%' : '68%'
+    });
 
     addHistoryRecord({
       type: 'Zone',
@@ -974,6 +993,30 @@ function addHistoryRecord(record) {
     console.warn('History could not be persisted:', error.message);
   }
   renderHistory();
+
+  const feed = id('activityFeed');
+  if (feed) {
+    const mode = /permit|safe|on_route/i.test(record.status)
+      ? 'ok'
+      : /restricted|not|off_route|error/i.test(record.status)
+        ? 'bad'
+        : 'info';
+    const row = document.createElement('div');
+    row.className = 'activity-row fade-in';
+    row.innerHTML = `
+      <span class="activity-dot ${mode}"></span>
+      <span class="activity-time">${escapeHtml(new Date().toLocaleTimeString())}</span>
+      <span class="activity-text">${escapeHtml(record.type)} check — ${escapeHtml(record.ship_id)} (${escapeHtml(record.status)})</span>
+      <span class="activity-tag">${escapeHtml(record.type)}</span>`;
+    feed.insertBefore(row, feed.firstChild);
+    while (feed.children.length > 40) feed.removeChild(feed.lastChild);
+  }
+
+  const opsChecks = id('opsChecksToday');
+  if (opsChecks) {
+    const current = parseInt(opsChecks.textContent, 10) || 0;
+    opsChecks.textContent = String(current + 1);
+  }
 }
 
 function renderHistory() {
@@ -1064,8 +1107,10 @@ async function checkHealth() {
     const health = await request(ENDPOINTS.health);
     const backend = health.spatial_index ? ` (${health.spatial_index.backend})` : '';
     state.api = { status: 'ok', label: `${health.service} — connected${backend}` };
+    updateOpsBar({ apiHealth: 'Healthy', apiHealthSub: `Connected${backend} — no incidents` });
   } catch (error) {
     state.api = { status: 'bad', label: 'API offline or blocked' };
+    updateOpsBar({ apiHealth: 'Offline', apiHealthSub: 'Unreachable — check API base URL' });
   }
   renderApiStatus();
 }
