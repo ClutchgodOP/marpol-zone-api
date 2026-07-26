@@ -683,18 +683,18 @@ function renderRouteView(result) {
       )}
       ${statCard(
         'Cross-track distance',
-        `${formatNum(Math.abs(Number(result.cross_track_distance_nm || 0)), 2)} NM`,
-        'Perpendicular distance from the planned great-circle track.'
+        `${formatNum(result.cross_track_distance_nm, 2)} NM`,
+        `Allowed corridor: ${formatNum(result.corridor_width_nm, 0)} NM.`
       )}
       ${statCard(
         'Route progress',
         `${formatNum(result.route_progress_percent, 1)}%`,
-        'Estimated completion between origin and destination.'
+        `${formatNum(result.along_track_distance_nm, 1)} NM along the track.`
       )}
       ${statCard(
-        'Zones crossed',
-        crossed.length,
-        `${Array.from(new Set(crossed.map(zone => zone.annex))).length} annex(es) along this route.`
+        'Total route distance',
+        `${formatNum(result.total_route_distance_nm, 1)} NM`,
+        `${safeArray(result.route_points).length} sampled geodesic points.`
       )}
     </div>
     ${banner(result.summary, result.is_on_route)}
@@ -723,6 +723,10 @@ function createPanelRenderer({ spinnerId, resultsId, renderResult }) {
     id(spinnerId).style.display = panelState.status === 'loading' ? 'block' : 'none';
 
     const container = id(resultsId);
+    if (panelState.status === 'idle') {
+      container.innerHTML = '';
+      return;
+    }
     if (panelState.status === 'loading') {
       container.innerHTML = `<div class="empty-state">Contacting the compliance API…</div>`;
       return;
@@ -771,22 +775,6 @@ async function drawActiveZonePolygons(mapKey, activeZones) {
   }
 }
 
-/* ---- Operations Bar sync (additive: feeds the new live KPI cards) ---- */
-function updateOpsBar(patch) {
-  const map = {
-    opsApiHealth: patch.apiHealth,
-    opsApiHealthSub: patch.apiHealthSub,
-    opsCurrentZone: patch.currentZone,
-    opsActiveVessel: patch.activeVessel,
-    opsConfidence: patch.confidence
-  };
-  Object.entries(map).forEach(([elementId, value]) => {
-    if (value === undefined) return;
-    const el = id(elementId);
-    if (el) el.textContent = value;
-  });
-}
-
 async function runZoneCheck() {
   const latitude = numberFrom('z_lat');
   const longitude = numberFrom('z_lon');
@@ -803,7 +791,6 @@ async function runZoneCheck() {
 
   setState('zone', { status: 'loading', problem: null, request: payload });
   maps.setShip('zone', latitude, longitude, { label: `${shipId} — evaluating…` });
-  updateOpsBar({ activeVessel: shipId });
 
   try {
     const result = await postJson(ENDPOINTS.checkZone, payload);
@@ -817,12 +804,6 @@ async function runZoneCheck() {
       open: true
     });
     await drawActiveZonePolygons('zone', result.active_zones);
-
-    const inZone = Boolean(result.in_special_area);
-    updateOpsBar({
-      currentZone: inZone ? (safeArray(result.active_zones)[0]?.zone_name || 'Inside special area') : 'Outside',
-      confidence: result.nearest_land_rule_satisfied ? '92%' : '68%'
-    });
 
     addHistoryRecord({
       type: 'Zone',
@@ -993,30 +974,6 @@ function addHistoryRecord(record) {
     console.warn('History could not be persisted:', error.message);
   }
   renderHistory();
-
-  const feed = id('activityFeed');
-  if (feed) {
-    const mode = /permit|safe|on_route/i.test(record.status)
-      ? 'ok'
-      : /restricted|not|off_route|error/i.test(record.status)
-        ? 'bad'
-        : 'info';
-    const row = document.createElement('div');
-    row.className = 'activity-row fade-in';
-    row.innerHTML = `
-      <span class="activity-dot ${mode}"></span>
-      <span class="activity-time">${escapeHtml(new Date().toLocaleTimeString())}</span>
-      <span class="activity-text">${escapeHtml(record.type)} check — ${escapeHtml(record.ship_id)} (${escapeHtml(record.status)})</span>
-      <span class="activity-tag">${escapeHtml(record.type)}</span>`;
-    feed.insertBefore(row, feed.firstChild);
-    while (feed.children.length > 40) feed.removeChild(feed.lastChild);
-  }
-
-  const opsChecks = id('opsChecksToday');
-  if (opsChecks) {
-    const current = parseInt(opsChecks.textContent, 10) || 0;
-    opsChecks.textContent = String(current + 1);
-  }
 }
 
 function renderHistory() {
@@ -1107,10 +1064,8 @@ async function checkHealth() {
     const health = await request(ENDPOINTS.health);
     const backend = health.spatial_index ? ` (${health.spatial_index.backend})` : '';
     state.api = { status: 'ok', label: `${health.service} — connected${backend}` };
-    updateOpsBar({ apiHealth: 'Healthy', apiHealthSub: `Connected${backend} — no incidents` });
   } catch (error) {
     state.api = { status: 'bad', label: 'API offline or blocked' };
-    updateOpsBar({ apiHealth: 'Offline', apiHealthSub: 'Unreachable — check API base URL' });
   }
   renderApiStatus();
 }
@@ -1180,167 +1135,3 @@ Object.assign(window, {
 });
 
 window.addEventListener('DOMContentLoaded', init);
-
-/* ============ UI POLISH LAYER (append-only, no edits to existing code) ============ */
-
-/* ---- Animated counters ---- */
-function animateCounter(el, targetText, duration = 900) {
-  const match = String(targetText).match(/-?\d+(\.\d+)?/);
-  if (!match) { el.textContent = targetText; return; }
-  const target = parseFloat(match[0]);
-  const suffix = String(targetText).slice(match.index + match[0].length);
-  const prefix = String(targetText).slice(0, match.index);
-  const decimals = (match[0].split('.')[1] || '').length;
-  const start = performance.now();
-  const from = 0;
-  function tick(now) {
-    const progress = Math.min(1, (now - start) / duration);
-    const eased = 1 - Math.pow(1 - progress, 3);
-    const value = (from + (target - from) * eased).toFixed(decimals);
-    el.textContent = `${prefix}${value}${suffix}`;
-    if (progress < 1) requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-}
-
-function animateAllCounters(scope = document) {
-  scope.querySelectorAll('.kpi-value, .stat-value').forEach(el => {
-    if (el.dataset.counted) return;
-    el.dataset.counted = '1';
-    const original = el.textContent;
-    animateCounter(el, original);
-  });
-}
-
-/* ---- Skeleton loaders (overrides loading branch visually) ---- */
-function skeletonStackHtml() {
-  return `<div class="skeleton-stack">
-    <div class="skeleton-row">
-      <div class="skeleton-block"></div><div class="skeleton-block"></div>
-      <div class="skeleton-block"></div><div class="skeleton-block"></div>
-    </div>
-    <div class="skeleton-block" style="height:160px;"></div>
-  </div>`;
-}
-
-const originalResultIds = ['zoneResults', 'slopResults', 'routeResults'];
-const skeletonObserver = new MutationObserver(() => {
-  originalResultIds.forEach(rid => {
-    const el = id(rid);
-    if (el && el.innerHTML.includes('Contacting the compliance API')) {
-      el.innerHTML = skeletonStackHtml();
-    }
-  });
-  animateAllCounters(document);
-});
-originalResultIds.forEach(rid => {
-  const el = id(rid);
-  if (el) skeletonObserver.observe(el, { childList: true });
-});
-
-/* ---- Keyboard shortcuts ---- */
-document.addEventListener('keydown', (event) => {
-  const tag = (event.target.tagName || '').toLowerCase();
-  const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
-
-  if (event.key === '/' && !typing) {
-    event.preventDefault();
-    const search = id('historySearch') || id('drawerSearch');
-    if (search) search.focus();
-    return;
-  }
-  if (typing) return;
-
-  if (['1', '2', '3', '4'].includes(event.key)) {
-    const tabMap = { '1': 'zone', '2': 'slop', '3': 'route', '4': 'history' };
-    const target = tabMap[event.key];
-    const btn = document.querySelector(`[data-tab-btn="${target}"]`);
-    if (btn) showTab(target, btn);
-  }
-  if (event.key.toLowerCase() === 'd') toggleDrawer();
-  if (event.key.toLowerCase() === 't') toggleTheme();
-  if (event.key === 'Escape') {
-    const drawer = id('historyDrawer');
-    if (drawer && drawer.classList.contains('open')) toggleDrawer();
-  }
-});
-
-/* ---- Recent history drawer ---- */
-function toggleDrawer() {
-  const drawer = id('historyDrawer');
-  const overlay = id('drawerOverlay');
-  if (!drawer || !overlay) return;
-  const opening = !drawer.classList.contains('open');
-  drawer.classList.toggle('open', opening);
-  overlay.classList.toggle('open', opening);
-  if (opening) renderDrawer();
-}
-
-function renderDrawer() {
-  const list = id('drawerList');
-  if (!list) return;
-  const query = (id('drawerSearch').value || '').toLowerCase();
-  const items = (state.history || []).filter(item =>
-    !query ||
-    String(item.ship_id).toLowerCase().includes(query) ||
-    String(item.type).toLowerCase().includes(query) ||
-    String(item.status).toLowerCase().includes(query)
-  );
-
-  if (!items.length) {
-    list.innerHTML = `<div class="empty-state">No matching recent activity.</div>`;
-    return;
-  }
-
-  list.innerHTML = items.map((item, index) => `
-    <div class="drawer-item" style="animation-delay:${index * 40}ms;">
-      <div class="di-top">
-        <span>${escapeHtml(item.time)}</span>
-        <span>${escapeHtml(item.type)}</span>
-      </div>
-      <div class="di-summary"><strong>${escapeHtml(item.ship_id)}</strong> — ${escapeHtml(item.status)}</div>
-    </div>
-  `).join('');
-}
-
-/* ---- Searchable request history (main History tab table) ---- */
-function filterHistory(query) {
-  const tbody = id('historyBody');
-  if (!tbody) return;
-  const term = (query || '').toLowerCase();
-  const filtered = !term
-    ? state.history
-    : state.history.filter(item =>
-        String(item.ship_id).toLowerCase().includes(term) ||
-        String(item.type).toLowerCase().includes(term) ||
-        String(item.status).toLowerCase().includes(term) ||
-        String(item.summary).toLowerCase().includes(term)
-      );
-
-  if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No matching history entries.</div></td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = filtered.map(item => {
-    const mode = /permit|safe|on_route/i.test(item.status)
-      ? 'ok'
-      : /restricted|not|off_route|error/i.test(item.status)
-        ? 'bad'
-        : 'warn';
-    return `<tr>
-      <td>${escapeHtml(item.time)}</td>
-      <td>${escapeHtml(item.ship_id)}</td>
-      <td>${escapeHtml(item.type)}</td>
-      <td>${escapeHtml(item.coords)}</td>
-      <td>${escapeHtml(formatNum(item.distance, 2))} NM</td>
-      <td><span class="history-status ${mode}">${escapeHtml(item.status)}</span></td>
-      <td>${escapeHtml(item.summary)}</td>
-    </tr>`;
-  }).join('');
-}
-
-Object.assign(window, { filterHistory, toggleDrawer, renderDrawer });
-
-/* ---- Kick off counters on hero KPIs at load ---- */
-window.addEventListener('load', () => animateAllCounters(document));
