@@ -171,11 +171,17 @@ const state = {
 
 const renderers = {};
 
+const loadingMessages = {
+  zone: { title: 'Checking MARPOL zones…', copy: 'Evaluating active special areas, nearest-land distance, and disposal rules for the submitted ship position.' },
+  slop: { title: 'Running slop discharge logic…', copy: 'Verifying Annex I restrictions, ODMCS-related inputs, distance threshold, and operational rule outcomes.' },
+  route: { title: 'Validating route position…', copy: 'Comparing the reported vessel coordinates against the intended corridor, route progress, and off-track tolerance.' }
+};
+
 /** The only entry point for mutating panel state; merges then re-renders. */
 function setState(panel, patch) {
   state[panel] = Object.assign({}, state[panel], patch);
   const render = renderers[panel];
-  if (render) render(state[panel]);
+  if (render) render(state[panel], panel);
 }
 
 /* ─────────────────────────────── maps ─────────────────────────────── */
@@ -392,6 +398,9 @@ const statCard = (label, value, note) => `
     <div class="stat-note">${note}</div>
   </div>`;
 
+const resultBadge = passed =>
+  `<span class="result-badge ${passed ? 'pass' : 'fail'}">${passed ? 'PASS' : 'FAIL'}</span>`;
+
 const emptyState = message => `<div class="empty-state">${escapeHtml(message)}</div>`;
 
 const cardPanel = (title, inner) => `
@@ -488,7 +497,9 @@ function renderDisposalAssessment(result) {
         iconMode: item.allowed ? 'ok' : 'no',
         title: item.label || item.code || 'Assessment item',
         subtitle: item.reason || 'No explanation returned.',
-        meta: item.allowed ? tag('Allowed', 'ok') : tag('Restricted', 'error')
+        meta:
+          `${resultBadge(Boolean(item.allowed))}` +
+          `<div style="margin-top:8px">${item.allowed ? tag('Allowed', 'ok') : tag('Restricted', 'error')}</div>`
       })
     )
   );
@@ -506,7 +517,8 @@ function renderRulesChecklist(result) {
         title: rule.rule_name || rule.rule_code || 'Rule',
         subtitle: rule.note || 'No note returned.',
         meta:
-          `<div><strong>Actual</strong> ${escapeHtml(rule.actual_value)}</div>` +
+          `${resultBadge(Boolean(rule.passed))}` +
+          `<div style="margin-top:8px"><strong>Actual</strong> ${escapeHtml(rule.actual_value)}</div>` +
           `<div><strong>Required</strong> ${escapeHtml(rule.required_value)}</div>`
       })
     )
@@ -719,16 +731,24 @@ function renderRouteView(result) {
  * setState() is the single path from state change to repaint.
  */
 function createPanelRenderer({ spinnerId, resultsId, renderResult }) {
-  return function render(panelState) {
+  return function render(panelState, panelName) {
     id(spinnerId).style.display = panelState.status === 'loading' ? 'block' : 'none';
 
     const container = id(resultsId);
+    container.classList.remove('result-flash');
+
     if (panelState.status === 'idle') {
       container.innerHTML = '';
       return;
     }
     if (panelState.status === 'loading') {
-      container.innerHTML = `<div class="empty-state">Contacting the compliance API…</div>`;
+      const loading = loadingMessages[panelName] || loadingMessages.zone;
+      container.innerHTML = `
+        <div class="empty-state loading-shell">
+          <div class="spinner"></div>
+          <div class="loading-title">${escapeHtml(loading.title)}</div>
+          <div class="loading-copy">${escapeHtml(loading.copy)}</div>
+        </div>`;
       return;
     }
     if (panelState.status === 'error') {
@@ -736,6 +756,8 @@ function createPanelRenderer({ spinnerId, resultsId, renderResult }) {
       return;
     }
     container.innerHTML = renderResult(panelState.result);
+    container.classList.add('result-flash');
+    setTimeout(() => container.classList.remove('result-flash'), 600);
   };
 }
 
@@ -1061,11 +1083,17 @@ function renderApiStatus() {
 
 async function checkHealth() {
   try {
+    const startedAt = performance.now();
     const health = await request(ENDPOINTS.health);
+    const latency = Math.max(1, Math.round(performance.now() - startedAt));
     const backend = health.spatial_index ? ` (${health.spatial_index.backend})` : '';
     state.api = { status: 'ok', label: `${health.service} — connected${backend}` };
+    const latencyNode = id('heroLatency');
+    if (latencyNode) latencyNode.textContent = `${latency} ms`;
   } catch (error) {
     state.api = { status: 'bad', label: 'API offline or blocked' };
+    const latencyNode = id('heroLatency');
+    if (latencyNode) latencyNode.textContent = 'Offline';
   }
   renderApiStatus();
 }
