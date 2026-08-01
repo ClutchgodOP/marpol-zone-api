@@ -1062,8 +1062,7 @@ function renderApiStatus() {
 async function checkHealth() {
   try {
     const health = await request(ENDPOINTS.health);
-    const backend = health.spatial_index ? ` (${health.spatial_index.backend})` : '';
-    state.api = { status: 'ok', label: `${health.service} — connected${backend}` };
+    state.api = { status: 'ok', label: `${health.service} — connected` };
   } catch (error) {
     state.api = { status: 'bad', label: 'API offline or blocked' };
   }
