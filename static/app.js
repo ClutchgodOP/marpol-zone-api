@@ -974,6 +974,12 @@ function addHistoryRecord(record) {
     console.warn('History could not be persisted:', error.message);
   }
   renderHistory();
+  
+  const lastCheckNode = id('heroLastCheck');
+  if (lastCheckNode) lastCheckNode.textContent = `${record.type} · ${new Date().toLocaleTimeString()}`;
+  const lastCheckDot = id('heroLastCheckDot');
+  if (lastCheckDot) lastCheckDot.className = `hero-status-dot ${record.status === 'ERROR' ? 'bad' : 'ok'}`;
+
 }
 
 function renderHistory() {
@@ -1060,14 +1066,25 @@ function renderApiStatus() {
 }
 
 async function checkHealth() {
+  const apiDot = id('heroApiDot');
+  const apiValue = id('heroApiValue');
   try {
     const health = await request(ENDPOINTS.health);
+    const backend = health.spatial_index ? health.spatial_index : null;
     state.api = { status: 'ok', label: `${health.service} — connected` };
+    if (apiDot) apiDot.className = 'hero-status-dot ok';
+    if (apiValue) apiValue.textContent = 'Connected';
+    if (backend && id('heroZoneCount')) {
+      id('heroZoneCount').textContent = backend.indexed_zones ?? '—';
+    }
   } catch (error) {
     state.api = { status: 'bad', label: 'API offline or blocked' };
+    if (apiDot) apiDot.className = 'hero-status-dot bad';
+    if (apiValue) apiValue.textContent = 'Offline';
   }
   renderApiStatus();
 }
+
 
 /* ─────────────────────── map sync button handlers ─────────────────────── */
 
