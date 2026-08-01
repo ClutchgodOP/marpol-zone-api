@@ -1086,8 +1086,7 @@ async function checkHealth() {
     const startedAt = performance.now();
     const health = await request(ENDPOINTS.health);
     const latency = Math.max(1, Math.round(performance.now() - startedAt));
-    const backend = health.spatial_index ? ` (${health.spatial_index.backend})` : '';
-    state.api = { status: 'ok', label: `${health.service} — connected${backend}` };
+    state.api = { status: 'ok', label: `${health.service} — connected` };
     const latencyNode = id('heroLatency');
     if (latencyNode) latencyNode.textContent = `${latency} ms`;
   } catch (error) {
