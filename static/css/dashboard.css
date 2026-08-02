@@ -1,0 +1,330 @@
+/* ── Volteo Maritime Dashboard — Animated Styles ──────────────────────── */
+/* Supplements the inline :root tokens in index.html.                      */
+/* Source order: animations → layout helpers → components → utilities      */
+
+/* ── Keyframes ────────────────────────────────────────────────────────── */
+@keyframes badgePop {
+  0%   { transform: scale(0.6); opacity: 0; }
+  70%  { transform: scale(1.08); }
+  100% { transform: scale(1);   opacity: 1; }
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 8px rgba(0, 212, 255, 0.3); }
+  50%       { box-shadow: 0 0 24px rgba(0, 212, 255, 0.7); }
+}
+
+@keyframes scanline {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+/* ── Loading screen enhancements ──────────────────────────────────────── */
+#loader::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 40%,
+    rgba(0, 212, 255, 0.03) 50%,
+    transparent 60%
+  );
+  animation: scanline 3s linear infinite;
+  pointer-events: none;
+}
+
+/* ── Tab system ───────────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.25rem;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s, border-color 0.2s;
+  position: relative;
+}
+
+.tab-btn:hover  { color: var(--accent); }
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.tab-panel { display: none; }
+.tab-panel.active {
+  display: block;
+  animation: fadeSlideUp 0.35s ease both;
+}
+
+/* ── Status badges ────────────────────────────────────────────────────── */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.85rem;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.badge-safe {
+  background: rgba(0, 230, 118, 0.12);
+  border: 1px solid var(--safe);
+  color: var(--safe);
+  animation: pulseGlow 2.5s ease-in-out infinite;
+}
+
+.badge-restricted {
+  background: rgba(255, 107, 53, 0.12);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+}
+
+/* ── Rules checklist ──────────────────────────────────────────────────── */
+.rule-row {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  margin-bottom: 0.4rem;
+  border-left: 3px solid transparent;
+  transition: background 0.2s;
+  animation: fadeSlideUp 0.3s ease both;
+}
+
+.rule-pass {
+  background: rgba(0, 230, 118, 0.06);
+  border-left-color: var(--safe);
+}
+.rule-fail {
+  background: rgba(255, 107, 53, 0.08);
+  border-left-color: var(--warn);
+}
+
+.rule-icon {
+  font-size: 0.9rem;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.rule-pass .rule-icon { color: var(--safe); }
+.rule-fail .rule-icon { color: var(--warn); }
+
+.rule-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.2rem;
+}
+
+.rule-vals {
+  display: flex;
+  gap: 1.25rem;
+  font-size: 0.74rem;
+  color: var(--text-dim);
+}
+
+.rule-note {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  margin-top: 0.25rem;
+  opacity: 0.8;
+}
+
+/* ── Data table ───────────────────────────────────────────────────────── */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.data-table th {
+  text-align: left;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table td {
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid rgba(26, 58, 92, 0.5);
+  color: var(--text);
+  vertical-align: top;
+}
+
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td      { background: rgba(0, 212, 255, 0.04); }
+
+/* ── Disposal assessment ──────────────────────────────────────────────── */
+.disposal-item {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 8px;
+  margin-bottom: 0.4rem;
+  font-size: 0.8rem;
+  border-left: 3px solid transparent;
+}
+.disposal-item.allowed    { background: rgba(0,230,118,0.06); border-left-color: var(--safe); }
+.disposal-item.disallowed { background: rgba(255,107,53,0.08); border-left-color: var(--warn); }
+.disposal-item > span { font-size: 1rem; margin-top: 2px; flex-shrink: 0; }
+.disposal-item.allowed    > span { color: var(--safe); }
+.disposal-item.disallowed > span { color: var(--warn); }
+.disposal-item p  { font-size: 0.72rem; color: var(--text-dim); margin-top: 0.2rem; }
+
+/* ── Result header ────────────────────────────────────────────────────── */
+.result-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+.result-dist {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.result-summary {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  line-height: 1.55;
+  margin-bottom: 1rem;
+}
+
+/* ── Section label ────────────────────────────────────────────────────── */
+.section-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 1rem 0 0.5rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3rem;
+}
+
+/* ── Route metrics ────────────────────────────────────────────────────── */
+.route-metrics {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.metric {
+  background: rgba(0, 212, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.metric span  { color: var(--text-dim); }
+.metric strong { color: var(--accent); font-size: 1rem; }
+
+/* ── Spinner ──────────────────────────────────────────────────────────── */
+.spinner {
+  width: 36px; height: 36px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 2rem auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Error box ────────────────────────────────────────────────────────── */
+.error-box {
+  background: rgba(255, 107, 53, 0.08);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  font-size: 0.8rem;
+  color: var(--warn);
+  animation: fadeSlideUp 0.3s ease both;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────── */
+.empty-state {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 1.5rem;
+  opacity: 0.7;
+}
+
+/* ── History panel ────────────────────────────────────────────────────── */
+.history-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  animation: fadeSlideUp 0.3s ease both;
+}
+.history-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  margin-bottom: 0.35rem;
+}
+.history-type   { font-weight: 600; color: var(--accent); }
+.history-coords { font-size: 0.72rem; color: var(--text-dim); margin: 0.25rem 0; }
+.history-summary{ font-size: 0.75rem; color: var(--text-dim); opacity: 0.85; }
+
+/* ── NLS toggle row ───────────────────────────────────────────────────── */
+.nls-badge {
+  display: inline-block;
+  font-size: 0.62rem;
+  padding: 2px 7px;
+  background: rgba(255, 200, 0, 0.12);
+  border: 1px solid #ffc800;
+  border-radius: 12px;
+  color: #ffc800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+}
+
+/* ── Checkbox field ───────────────────────────────────────────────────── */
+.form-row.checkbox-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.6rem;
+}
+.form-row.checkbox-row input[type="checkbox"] {
+  width: 16px; height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Globe overlay text ───────────────────────────────────────────────── */
+.globe-overlay h1 { text-shadow: 0 2px 24px rgba(0,212,255,0.4); }

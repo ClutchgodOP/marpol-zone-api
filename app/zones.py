@@ -441,4 +441,42 @@ MARPOL_ZONES = [
 
     # NOTE — A North-East Atlantic ECA has been proposed (MEPC 83) but is not yet
     # adopted; do not add until formally in force.
+    
+    # ── NEW: MEPC.407(84) North-East Atlantic ECA ─────────────────────────
+    {
+        "zone_id": "ANNEX6_NE_ATLANTIC_ECA",
+        "name": "North-East Atlantic ECA",
+        "annex": "VI",
+        "type": "Air Pollution (SOx/NOx ECA)",
+        "restriction": (
+            "Fuel sulphur ≤ 0.10% m/m from 1 Sep 2028 (Reg 14); "
+            "NOx Tier III for ships with building contract ≥ 1 Jan 2027 (Reg 13). "
+            "Entry into force: 1 Sep 2027."
+        ),
+        "effective_date": "2027-09-01",
+        "enforcement_date": "2028-09-01",
+        "guidance": (
+            "Covers EEZs of Greenland, Iceland, Faroe Islands, Ireland, UK, "
+            "France, Spain, Portugal up to 200 NM. Polygon is advisory pending "
+            "Appendix VII publication by IMO Secretariat."
+        ),
+        "source": "IMO Resolution MEPC.407(84), adopted May 2026",
+        "polygon": Polygon([
+            (-44.0, 35.0),   # SW — Portugal/Spain Atlantic coast
+            (-9.5,  35.9),   # SE — Cape St. Vincent
+            (-5.0,  36.0),   # Gibraltar strait west
+            (-5.0,  48.5),   # Bay of Biscay north
+            (-10.0, 51.5),   # Ireland SW corner
+            (-16.0, 57.0),   # Ireland NW / Scotland west
+            (-10.0, 61.5),   # Faroe Islands latitude
+            (-25.0, 63.0),   # Iceland south
+            (-24.0, 66.5),   # Iceland east
+            (-14.0, 67.0),   # Iceland / Norway junction
+            (-30.0, 73.0),   # Greenland SE coast
+            (-44.0, 74.0),   # Greenland SW
+            (-50.0, 67.0),   # Greenland south tip
+            (-44.0, 35.0),   # close polygon back to SW
+        ]),
+    },
+
 ]
