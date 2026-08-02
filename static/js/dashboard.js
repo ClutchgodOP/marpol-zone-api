@@ -2,8 +2,8 @@
  * dashboard.js — Volteo Maritime MARPOL Compliance Dashboard v3.0
  *
  * Module boundaries:
- *   config | dom-helpers | api | health | views | state | maps | history
- *   panels (zone / slop / route) | nls-toggle | boot
+ *   config | dom-helpers | auth | api | health | views | state | maps | history
+ *   panels (zone / slop / route) | nls-toggle | tabs | boot
  */
 
 'use strict';
@@ -16,6 +16,7 @@ import { ZonesOverlay }    from './zones-overlay.js';
 ═══════════════════════════════════════════════════════════════════════ */
 
 const RAILWAY_API    = 'https://volteo-maritime-marpol-zone-api.up.railway.app';
+const DEMO_API_KEY   = 'volteo-demo-key-2026';
 const HEALTH_POLL_MS = 15_000;
 const HISTORY_LIMIT  = 30;
 const TILE_URL       = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -34,6 +35,7 @@ const apiBase = () => {
 
 const ENDPOINTS = {
   health:       '/health',
+  authToken:    '/auth/token',
   checkZone:    '/api/v1/check-zone',
   checkSlop:    '/api/v1/check-slop',
   checkRoute:   '/api/v1/check-route',
@@ -64,16 +66,70 @@ class ApiProblem extends Error {
   }
 }
 
-async function request(path, opts = {}) {
-  const url = `${apiBase()}${path}`;
+/* ── JWT Token Manager ─────────────────────────────────────────────────
+   Auto-fetches a token on first request, caches it, and refreshes it
+   30 seconds before expiry. A 401 from the API forces an immediate
+   re-fetch (one retry only, to avoid loops).
+─────────────────────────────────────────────────────────────────────── */
+const auth = (() => {
+  let _token  = null;
+  let _expiry = 0;          // ms timestamp after which the token is stale
+  let _inflight = null;     // dedup concurrent token requests
+
+  async function fetchToken() {
+    const url = `${apiBase()}${ENDPOINTS.authToken}?api_key=${DEMO_API_KEY}`;
+    let res;
+    try {
+      res = await fetch(url, { method: 'POST' });
+    } catch (e) {
+      throw new ApiProblem({
+        type: 'about:blank', title: 'Auth network error', status: 0,
+        detail: `Could not reach ${url}. ${e.message}`, instance: ENDPOINTS.authToken,
+      });
+    }
+    if (!res.ok) {
+      throw new ApiProblem({
+        type: 'about:blank', title: 'Authentication failed', status: res.status,
+        detail: `POST /auth/token returned HTTP ${res.status}. Verify DEMO_API_KEY is valid on Railway.`,
+        instance: ENDPOINTS.authToken,
+      });
+    }
+    const data = await res.json();
+    _token  = data.access_token;
+    _expiry = Date.now() + ((data.expires_in || 900) - 30) * 1000;
+    return _token;
+  }
+
+  return {
+    async getToken() {
+      if (_token && Date.now() < _expiry) return _token;
+      if (!_inflight) _inflight = fetchToken().finally(() => { _inflight = null; });
+      return _inflight;
+    },
+    invalidate() { _token = null; _expiry = 0; },
+  };
+})();
+
+async function request(path, opts = {}, _retry = false) {
+  const token = await auth.getToken();
+  const url   = `${apiBase()}${path}`;
+  const headers = Object.assign(
+    { 'Authorization': `Bearer ${token}` },
+    opts.headers || {}
+  );
   let res;
   try {
-    res = await fetch(url, opts);
+    res = await fetch(url, { ...opts, headers });
   } catch (e) {
     throw new ApiProblem({
       type: 'about:blank', title: 'Network error', status: 0,
       detail: `Could not reach API at ${url}. ${e.message}`, instance: path,
     });
+  }
+  // Token expired mid-session — fetch fresh token and retry once
+  if (res.status === 401 && !_retry) {
+    auth.invalidate();
+    return request(path, opts, true);
   }
   const ct   = res.headers.get('content-type') || '';
   const body = ct.includes('json') ? await res.json().catch(() => null) : null;
@@ -459,7 +515,6 @@ function renderRoute(st) {
   // Draw route polyline on Leaflet
   if (safeArr(d.route_points).length >= 2) {
     if (routePolyline) routeMap.removeLayer(routePolyline);
-    // route_points: [[lat, lon], ...] from RouteCheckResponse
     routePolyline = L.polyline(d.route_points, {
       color: COLORS.primary, weight: 3, opacity: 0.85,
     }).addTo(routeMap);
