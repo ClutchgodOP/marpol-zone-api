@@ -185,6 +185,7 @@ header nav a:hover       { color: var(--accent); }
   border-radius: var(--radius-sm); color: var(--text);
   font-family: var(--font-body); font-size: 0.9rem;
   padding: 0.6rem 0.85rem; transition: border-color 0.2s, box-shadow 0.2s;
+  appearance: none;
   -webkit-appearance: none;
 }
 .form-group input:focus,
@@ -315,7 +316,6 @@ header nav a:hover       { color: var(--accent); }
 }
 .history-item:hover    { border-color: var(--accent); background: rgba(0,212,255,0.04); }
 .history-type          { font-size: 1.1rem; }
-.history-meta          {}
 .history-coords        { font-size: 0.78rem; font-family: var(--font-mono); color: var(--text-dim); }
 .history-time          { font-size: 0.7rem; color: var(--text-dim); }
 .history-badge {
