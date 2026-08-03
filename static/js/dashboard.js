@@ -5,8 +5,7 @@
  */
 'use strict';
 
-import { GlobeController } from './globe.js';
-import { ZonesOverlay }    from './zones-overlay.js';
+import { GlobeController, ZonesOverlay } from './globe.js';
 
 /* ═══════════════════ CONFIG ═══════════════════ */
 
