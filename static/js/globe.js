@@ -13,6 +13,7 @@ export class GlobeController {
   constructor(canvasId) {
     this._canvas  = document.getElementById(canvasId);
     this._pinMesh = null;
+    this._pinRing = null;
     this._running = true;
 
     this._initRenderer();
@@ -43,10 +44,10 @@ export class GlobeController {
     const loader = new THREE.TextureLoader();
     const geo = new THREE.SphereGeometry(1, 96, 96);
     const mat = new THREE.MeshPhongMaterial({
-      map:       loader.load(EARTH_TEXTURE),
+      map:         loader.load(EARTH_TEXTURE),
       specularMap: loader.load(EARTH_SPECULAR),
-      specular:  new THREE.Color('#333333'),
-      shininess: 12,
+      specular:    new THREE.Color('#333333'),
+      shininess:   12,
     });
     this._globe = new THREE.Mesh(geo, mat);
     this._scene.add(this._globe);
@@ -97,7 +98,11 @@ export class GlobeController {
       const theta = Math.random() * Math.PI * 2;
       const phi   = Math.acos(2 * Math.random() - 1);
       const r     = 8 + Math.random() * 6;
-      verts.push(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+      verts.push(
+        r * Math.sin(phi) * Math.cos(theta),
+        r * Math.sin(phi) * Math.sin(theta),
+        r * Math.cos(phi)
+      );
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
@@ -148,7 +153,10 @@ export class GlobeController {
     const color = status === 'SAFE' ? 0x00e676 : 0xff6b35;
     const group = new THREE.Group();
 
-    const core = new THREE.Mesh(new THREE.SphereGeometry(0.026, 16, 16), new THREE.MeshBasicMaterial({ color }));
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(0.026, 16, 16),
+      new THREE.MeshBasicMaterial({ color })
+    );
     core.position.set(x, y, z);
     group.add(core);
 

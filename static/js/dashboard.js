@@ -172,8 +172,6 @@ async function pollHealth() {
 
 function updateKpis() {
   const list = historyLoad();
-  const today = new Date().toDateString();
-  const todayList = list.filter(h => new Date(h.time && h.timestamp || Date.now()).toDateString() === today);
   const total = list.length;
   const safeCount = list.filter(h => h.status === 'SAFE').length;
   if ($('kpiChecks')) $('kpiChecks').textContent = String(total);

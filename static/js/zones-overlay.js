@@ -27,13 +27,13 @@ function annexKeyOf(annexRaw) {
 
 export class ZonesOverlay {
   constructor(mapContainerId) {
-    this._containerId  = mapContainerId;
-    this._geojson      = null;
-    this._highlighted  = null;
-    this._shipPoint    = null;
-    this._deckInstance = null;
+    this._containerId   = mapContainerId;
+    this._geojson       = null;
+    this._highlighted   = null;
+    this._shipPoint     = null;
+    this._deckInstance  = null;
     this._activeAnnexes = new Set(['I', 'II', 'IV', 'V', 'VI']);
-    this._viewState    = { longitude: 0, latitude: 20, zoom: 2, pitch: 0, bearing: 0 };
+    this._viewState     = { longitude: 0, latitude: 20, zoom: 2, pitch: 0, bearing: 0 };
   }
 
   async load(endpoint) {
@@ -143,7 +143,7 @@ export class ZonesOverlay {
     }
   }
 
-  _onHover(feature, x, y) {}
+  _onHover(_feature, _x, _y) {}
 
   _onClick(feature) {
     if (feature?.properties?.zone_id) this.highlight(feature.properties.zone_id);

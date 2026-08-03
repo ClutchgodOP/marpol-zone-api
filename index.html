@@ -20,19 +20,27 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/deck.gl@8.9.35/dist.min.js"></script>
 
   <link rel="stylesheet" href="/static/css/dashboard.css" />
 </head>
 <body>
 
+<!-- ─────────────────────────────────────────
+     LOADER
+───────────────────────────────────────── -->
 <div id="loader">
   <div class="loader-ring"></div>
   <p class="loader-text">Initialising MARPOL Engine</p>
 </div>
 
+<!-- ─────────────────────────────────────────
+     TOAST STACK
+───────────────────────────────────────── -->
 <div id="toastStack" aria-live="polite"></div>
 
+<!-- ─────────────────────────────────────────
+     HEADER
+───────────────────────────────────────── -->
 <header>
   <span class="logo">⚓ Volteo Maritime</span>
   <span class="badge">MARPOL v4.0</span>
@@ -47,6 +55,9 @@
   </nav>
 </header>
 
+<!-- ─────────────────────────────────────────
+     GLOBE HERO
+───────────────────────────────────────── -->
 <section id="globe-section">
   <canvas id="globe-canvas"></canvas>
   <div class="globe-overlay">
@@ -56,6 +67,9 @@
   <div class="globe-scrim"></div>
 </section>
 
+<!-- ─────────────────────────────────────────
+     KPI STRIP
+───────────────────────────────────────── -->
 <div class="kpi-strip reveal">
   <div class="kpi-card">
     <span class="kpi-label">Checks Today</span>
@@ -75,7 +89,12 @@
   </div>
 </div>
 
+<!-- ─────────────────────────────────────────
+     MAIN CONTENT
+───────────────────────────────────────── -->
 <main>
+
+  <!-- ── COMPLIANCE CHECK CARD ── -->
   <div class="card reveal">
     <div class="tabs">
       <button class="tab-btn active" data-tab="zonePanel">Zone Check</button>
@@ -84,8 +103,11 @@
     </div>
 
     <div class="workspace">
+
+      <!-- ── FORMS COLUMN ── -->
       <div class="workspace-forms">
 
+        <!-- ── ZONE CHECK PANEL ── -->
         <div class="tab-panel active" id="zonePanel">
           <div class="form-row">
             <label>Ship ID</label>
@@ -117,6 +139,7 @@
           <div id="zoneResult"><p class="empty-state">Enter a position and run a check.</p></div>
         </div>
 
+        <!-- ── SLOP / OIL CHECK PANEL ── -->
         <div class="tab-panel" id="slopPanel">
           <div class="form-row">
             <label>Ship ID</label>
@@ -158,7 +181,9 @@
           </div>
           <div class="form-row checkbox-row">
             <input type="checkbox" id="cargoIsNls" />
-            <label for="cargoIsNls" style="margin:0">Cargo is NLS <span class="nls-badge">Annex II</span></label>
+            <label for="cargoIsNls" style="margin:0">
+              Cargo is NLS <span class="nls-badge">Annex II</span>
+            </label>
           </div>
           <div class="form-row" id="nlsCategoryRow" style="display:none">
             <label>NLS Category</label>
@@ -174,6 +199,7 @@
           <div id="slopResult"><p class="empty-state">Enter discharge parameters and run a check.</p></div>
         </div>
 
+        <!-- ── ROUTE CHECK PANEL ── -->
         <div class="tab-panel" id="routePanel">
           <div class="form-row">
             <label>Ship ID</label>
@@ -226,52 +252,94 @@
           <div id="routeResult"><p class="empty-state">Set current position and route endpoints, then run a check.</p></div>
         </div>
 
-      </div>
+      </div><!-- /workspace-forms -->
 
+      <!-- ── MAP COLUMN ── -->
       <div class="workspace-map">
         <div class="panel-map" id="sharedMap">
+
+          <!-- Leaflet renders into #leafletMap, NOT into #sharedMap directly -->
+          <div id="leafletMap" style="height:100%;width:100%;border-radius:14px;"></div>
+
+          <!-- Loading shimmer -->
+          <div class="map-loading-overlay" id="mapLoader">
+            <div class="loader-ring"></div>
+          </div>
+
+          <!-- Legend -->
           <div id="zoneLegend" class="glass-panel legend-panel">
             <div class="legend-title">MARPOL Annexes</div>
-            <label><input type="checkbox" data-annex="I" checked><span class="dot" style="background:#ff6b35"></span>Annex I — Oil</label>
-            <label><input type="checkbox" data-annex="II" checked><span class="dot" style="background:#ffc800"></span>Annex II — NLS</label>
-            <label><input type="checkbox" data-annex="IV" checked><span class="dot" style="background:#00c8ff"></span>Annex IV — Sewage</label>
-            <label><input type="checkbox" data-annex="V" checked><span class="dot" style="background:#96ff64"></span>Annex V — Garbage</label>
-            <label><input type="checkbox" data-annex="VI" checked><span class="dot" style="background:#c864ff"></span>Annex VI — Air (ECA)</label>
+            <label><input type="checkbox" data-annex="I"   checked><span class="dot" style="background:#ff6b35"></span>Annex I — Oil</label>
+            <label><input type="checkbox" data-annex="II"  checked><span class="dot" style="background:#ffc800"></span>Annex II — NLS</label>
+            <label><input type="checkbox" data-annex="IV"  checked><span class="dot" style="background:#00c8ff"></span>Annex IV — Sewage</label>
+            <label><input type="checkbox" data-annex="V"   checked><span class="dot" style="background:#96ff64"></span>Annex V — Garbage</label>
+            <label><input type="checkbox" data-annex="VI"  checked><span class="dot" style="background:#c864ff"></span>Annex VI — Air (ECA)</label>
           </div>
+
+          <!-- Coordinate readout -->
+          <div class="map-coords-bar" id="mapCoordsBar">Lat — &nbsp; Lon —</div>
+
+          <!-- Crosshair -->
           <div class="map-crosshair" id="mapCrosshair"></div>
+
         </div>
         <p class="map-hint">Click anywhere on the map to set coordinates for the active panel.</p>
-      </div>
-    </div>
-  </div>
+      </div><!-- /workspace-map -->
 
+    </div><!-- /workspace -->
+  </div><!-- /card -->
+
+  <!-- ── CHECK HISTORY CARD ── -->
   <div class="card reveal" style="margin-top:1.5rem">
     <div class="history-header">
       <p class="card-title" style="margin:0">Check History</p>
       <button class="btn-ghost" id="clearHistory">Clear</button>
     </div>
-    <div id="historyList"><p class="empty-state">No checks yet. Run a zone, slop, or route check above.</p></div>
+    <div id="historyList">
+      <p class="empty-state">No checks yet. Run a zone, slop, or route check above.</p>
+    </div>
   </div>
 
+  <!-- ── ADVANCED: API BASE URL OVERRIDE ── -->
   <div class="api-base-row">
-    <input type="text" id="apiBase" placeholder="Override API base URL (advanced, optional)" />
+    <input
+      type="text"
+      id="apiBase"
+      placeholder="Override API base URL (advanced, optional)"
+    />
   </div>
+
 </main>
 
+<!-- ─────────────────────────────────────────
+     FOOTER
+───────────────────────────────────────── -->
 <footer>
   Volteo Maritime MARPOL Compliance API v4.0 &mdash;
   Zone data sourced from IMO resolutions incl. MEPC.407(84) &mdash;
-  <a href="https://volteo-maritime-marpol-zone-api.up.railway.app/docs" target="_blank" rel="noopener">API Docs</a> &middot;
+  <a href="https://volteo-maritime-marpol-zone-api.up.railway.app/docs" target="_blank" rel="noopener">API Docs</a>
+  &middot;
   <a href="https://www.imo.org" target="_blank" rel="noopener">IMO.org</a>
 </footer>
 
+<!-- ─────────────────────────────────────────
+     SCRIPTS
+───────────────────────────────────────── -->
+
+<!-- Main dashboard module (Three.js globe, Leaflet map, API calls, tab logic) -->
 <script type="module" src="/static/js/dashboard.js"></script>
 
+<!-- Intersection Observer: reveal cards on scroll -->
 <script>
   const revealEls = document.querySelectorAll('.reveal');
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
-  }, { threshold: 0.1 });
+  const io = new IntersectionObserver(
+    (entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) e.target.classList.add('visible');
+      });
+    },
+    { threshold: 0.1 }
+  );
   revealEls.forEach(el => io.observe(el));
 </script>
 
