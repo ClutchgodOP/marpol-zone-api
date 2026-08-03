@@ -37,14 +37,14 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# ── Rate limiter state ────────────────────────────────────────────────────────
+# ── Rate limiter ──────────────────────────────────────────────────────────────
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 register_exception_handlers(app)
 
-# ── CORS — explicit allowlist, no wildcard ────────────────────────────────────
+# ── CORS ──────────────────────────────────────────────────────────────────────
 _origins = [
     "http://127.0.0.1:3000",  "http://localhost:3000",
     "http://127.0.0.1:5500",  "http://localhost:5500",
@@ -58,13 +58,13 @@ if _extra:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_origins,          # explicit list — no "*"
+    allow_origins=_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],   # no DELETE/PUT/PATCH needed
+    allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
-# ── Auth token endpoint ───────────────────────────────────────────────────────
+# ── Auth ──────────────────────────────────────────────────────────────────────
 @app.post(
     "/auth/token",
     response_model=TokenResponse,
@@ -76,15 +76,10 @@ async def get_token(request: Request, api_key: str):
     """Pass your API key as a query param: `POST /auth/token?api_key=...`"""
     return exchange_api_key(api_key)
 
-
-# ── Versioned API routers ─────────────────────────────────────────────────────
+# ── API routers ───────────────────────────────────────────────────────────────
 app.include_router(check_zone_router)
 
-# ── Static + Dashboard ───────────────────────────────────────────────────────
-if STATIC_DIR.is_dir():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-
+# ── Ops ───────────────────────────────────────────────────────────────────────
 @app.get("/health", tags=["Ops"])
 @limiter.limit("60/minute")
 async def health(request: Request):
@@ -95,14 +90,21 @@ async def health(request: Request):
         "spatial_index": index_stats(),
     }
 
-
+# ── Dashboard routes — MUST be defined BEFORE app.mount ──────────────────────
 @app.get("/", include_in_schema=False)
 async def root():
+    if INDEX_HTML.is_file():
+        return FileResponse(str(INDEX_HTML), media_type="text/html")
     return RedirectResponse(url="/docs")
-
 
 @app.get("/dashboard", include_in_schema=False)
 async def dashboard():
     if INDEX_HTML.is_file():
         return FileResponse(str(INDEX_HTML), media_type="text/html")
     return RedirectResponse(url="/docs")
+
+# ── Static files — MUST be mounted LAST ──────────────────────────────────────
+# app.mount() is greedy: it intercepts all paths under /static.
+# Any @app.get() routes defined after mount() may be shadowed.
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
