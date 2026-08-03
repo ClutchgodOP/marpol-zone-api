@@ -1,158 +1,206 @@
 /**
- * zones-overlay.js — deck.gl GeoJSON layer rendered over the Leaflet map.
- * Draws MARPOL special-area polygons with annex-based coloring and an
- * interactive filter (via setAnnexFilter). Ship position rendered as a
- * pulsing scatter point.
+ * zones-overlay.js
+ * Leaflet-native GeoJSON overlay for MARPOL special areas and SOx ECAs.
+ *
+ * IMPORTANT: This implementation is deliberately Leaflet-native.
+ * The original used deck.gl which was never loaded via CDN.
+ * This version uses only L.geoJSON which is always available.
+ *
+ * Gracefully degrades: if GeoJSON fails to load, the map still works.
  */
 
-const { DeckGL, GeoJsonLayer, ScatterplotLayer } = deck;
+'use strict';
 
-const ANNEX_COLORS = {
-  I:  [255, 107, 53],
-  II: [255, 200, 0],
-  IV: [0, 200, 255],
-  V:  [150, 255, 100],
-  VI: [200, 100, 255],
+const FETCH_TIMEOUT_MS = 12_000;
+
+const ZONE_STYLES = {
+  special_area: {
+    color       : '#ff6b35',
+    weight      : 2,
+    opacity     : 0.9,
+    fillColor   : '#ff6b35',
+    fillOpacity : 0.15,
+  },
+  eca_sox: {
+    color       : '#00d4aa',
+    weight      : 2,
+    opacity     : 0.9,
+    fillColor   : '#00d4aa',
+    fillOpacity : 0.12,
+  },
+  eca_nox: {
+    color       : '#4ecdc4',
+    weight      : 2,
+    opacity     : 0.9,
+    fillColor   : '#4ecdc4',
+    fillOpacity : 0.12,
+  },
+  default: {
+    color       : '#888888',
+    weight      : 1.5,
+    opacity     : 0.7,
+    fillColor   : '#888888',
+    fillOpacity : 0.10,
+  },
 };
 
-function annexKeyOf(annexRaw) {
-  const a = (annexRaw || '').toUpperCase();
-  if (a.includes('VI'))  return 'VI';
-  if (a.includes('IV'))  return 'IV';
-  if (a.includes('V'))   return 'V';
-  if (a.includes('II'))  return 'II';
-  if (a.includes('I'))   return 'I';
-  return null;
-}
-
 export class ZonesOverlay {
-  constructor(mapContainerId) {
-    this._containerId   = mapContainerId;
-    this._geojson       = null;
-    this._highlighted   = null;
-    this._shipPoint     = null;
-    this._deckInstance  = null;
-    this._activeAnnexes = new Set(['I', 'II', 'IV', 'V', 'VI']);
-    this._viewState     = { longitude: 0, latitude: 20, zoom: 2, pitch: 0, bearing: 0 };
+  /**
+   * @param {L.Map} map   - Leaflet map instance
+   * @param {string} endpoint - GeoJSON endpoint URL
+   */
+  constructor(map, endpoint) {
+    this._map      = map;
+    this._endpoint = endpoint;
+    this._layers   = {};   // { layerKey: L.GeoJSON }
+    this._loaded   = false;
+    this._loading  = false;
   }
 
-  async load(endpoint) {
+  // ─── Public API ─────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch GeoJSON and render all zone layers.
+   * Safe to call multiple times — subsequent calls are no-ops if already loaded.
+   */
+  async load() {
+    if (this._loaded || this._loading) return;
+    this._loading = true;
+
     try {
-      const res = await fetch(endpoint);
-      this._geojson = await res.json();
-      this._render();
+      const data = await this._fetchWithTimeout(this._endpoint, FETCH_TIMEOUT_MS);
+      this._buildLayers(data);
+      this._loaded = true;
+      console.info(`[ZonesOverlay] Loaded ${data.features?.length ?? 0} zone features.`);
     } catch (err) {
-      console.warn('[ZonesOverlay] Failed to load GeoJSON:', err.message);
+      console.error('[ZonesOverlay] Failed to load zones — map remains functional.', err);
+    } finally {
+      this._loading = false;
     }
   }
 
-  highlight(zoneId) {
-    this._highlighted = zoneId;
-    this._render();
-  }
-
-  setAnnexFilter(annexSet) {
-    this._activeAnnexes = annexSet;
-    this._render();
-  }
-
-  setShipPosition(lat, lon, status = 'SAFE') {
-    this._shipPoint = { lat, lon, status };
-    this._render();
-  }
-
-  _render() {
-    if (!this._geojson) return;
-    const container = document.getElementById(this._containerId);
-    if (!container) return;
-
-    const layers = [
-      new GeoJsonLayer({
-        id: 'marpol-zones',
-        data: this._geojson,
-        pickable: true,
-        stroked: true,
-        filled: true,
-        extruded: false,
-        lineWidthMinPixels: 1.5,
-        getFillColor: f => {
-          const key = annexKeyOf(f.properties?.annex);
-          if (!key || !this._activeAnnexes.has(key)) return [0, 0, 0, 0];
-          const isHighlighted = f.properties?.zone_id === this._highlighted;
-          const [r, g, b] = ANNEX_COLORS[key] || [100, 160, 255];
-          return [r, g, b, isHighlighted ? 90 : 40];
-        },
-        getLineColor: f => {
-          const key = annexKeyOf(f.properties?.annex);
-          if (!key || !this._activeAnnexes.has(key)) return [0, 0, 0, 0];
-          const isHighlighted = f.properties?.zone_id === this._highlighted;
-          return isHighlighted ? [0, 212, 255, 255] : [0, 180, 255, 150];
-        },
-        getLineWidth: f => f.properties?.zone_id === this._highlighted ? 3 : 1.5,
-        onHover: ({ object, x, y }) => this._onHover(object, x, y),
-        onClick: ({ object }) => this._onClick(object),
-        updateTriggers: {
-          getFillColor: [this._highlighted, [...this._activeAnnexes].join(',')],
-          getLineColor: [this._highlighted, [...this._activeAnnexes].join(',')],
-        },
-      }),
-    ];
-
-    if (this._shipPoint) {
-      const { lat, lon, status } = this._shipPoint;
-      const color = status === 'SAFE' ? [0, 230, 118, 255] : [255, 107, 53, 255];
-      layers.push(
-        new ScatterplotLayer({
-          id: 'ship-position',
-          data: [{ position: [lon, lat] }],
-          getPosition: d => d.position,
-          getRadius: 18000,
-          getFillColor: color,
-          getLineColor: [255, 255, 255, 200],
-          lineWidthMinPixels: 2,
-          stroked: true,
-          radiusMinPixels: 7,
-          radiusMaxPixels: 18,
-        }),
-      );
+  /**
+   * Show a specific zone category layer.
+   * @param {string} key - e.g. 'special_area', 'eca_sox'
+   */
+  show(key) {
+    const layer = this._layers[key];
+    if (!layer || !this._map) return;
+    if (!this._map.hasLayer(layer)) {
+      this._map.addLayer(layer);
     }
+  }
 
-    if (!this._deckInstance) {
-      this._deckInstance = new DeckGL({
-        container,
-        initialViewState: this._viewState,
-        controller: false,
-        layers,
-        style: { position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 500 },
-        getTooltip: ({ object }) =>
-          object && object.properties
-            ? {
-                html: `
-                  <div style="background:#0b1929;border:1px solid #1a3a5c;border-radius:8px;padding:10px 14px;font-size:12px;color:#e0f0ff;line-height:1.6;">
-                    <strong style="color:#00d4ff">${object.properties.name || 'Zone'}</strong><br>
-                    Annex: ${object.properties.annex || '—'}<br>
-                    Type: ${object.properties.type || '—'}<br>
-                    Restriction: ${object.properties.restriction || '—'}
-                  </div>`,
-                style: { background: 'none', border: 'none', padding: '0' },
-              }
-            : null,
-      });
+  /**
+   * Hide a specific zone category layer.
+   * @param {string} key
+   */
+  hide(key) {
+    const layer = this._layers[key];
+    if (!layer || !this._map) return;
+    if (this._map.hasLayer(layer)) {
+      this._map.removeLayer(layer);
+    }
+  }
+
+  /**
+   * Show all loaded layers.
+   */
+  showAll() {
+    Object.keys(this._layers).forEach(k => this.show(k));
+  }
+
+  /**
+   * Hide all loaded layers.
+   */
+  hideAll() {
+    Object.keys(this._layers).forEach(k => this.hide(k));
+  }
+
+  /**
+   * Toggle a layer by key.
+   * @param {string} key
+   * @returns {boolean} new visibility state
+   */
+  toggle(key) {
+    const layer = this._layers[key];
+    if (!layer || !this._map) return false;
+    if (this._map.hasLayer(layer)) {
+      this._map.removeLayer(layer);
+      return false;
     } else {
-      this._deckInstance.setProps({ layers });
+      this._map.addLayer(layer);
+      return true;
     }
   }
 
-  _onHover(_feature, _x, _y) {}
-
-  _onClick(feature) {
-    if (feature?.properties?.zone_id) this.highlight(feature.properties.zone_id);
-  }
-
+  /**
+   * Remove all layers and free memory.
+   */
   destroy() {
-    if (this._deckInstance) {
-      this._deckInstance.finalize();
-      this._deckInstance = null;
+    Object.values(this._layers).forEach(layer => {
+      if (this._map?.hasLayer(layer)) {
+        this._map.removeLayer(layer);
+      }
+    });
+    this._layers = {};
+    this._loaded  = false;
+    this._loading = false;
+  }
+
+  // ─── Private ────────────────────────────────────────────────────────────────
+
+  async _fetchWithTimeout(url, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
+      return await res.json();
+    } finally {
+      clearTimeout(timer);
     }
+  }
+
+  _buildLayers(geojson) {
+    if (!geojson?.features?.length) {
+      console.warn('[ZonesOverlay] GeoJSON has no features.');
+      return;
+    }
+
+    // Group features by zone_type property
+    const groups = {};
+    for (const feature of geojson.features) {
+      const key = feature.properties?.zone_type || 'default';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(feature);
+    }
+
+    for (const [key, features] of Object.entries(groups)) {
+      const style   = ZONE_STYLES[key] ?? ZONE_STYLES.default;
+      const fc      = { type: 'FeatureCollection', features };
+      const layer   = L.geoJSON(fc, {
+        style       : () => style,
+        onEachFeature: this._bindPopup.bind(this),
+      });
+      this._layers[key] = layer;
+      this._map.addLayer(layer);
+    }
+  }
+
+  _bindPopup(feature, layer) {
+    const p = feature.properties || {};
+    const name     = p.name        || p.zone_name || 'MARPOL Zone';
+    const type     = p.zone_type   || 'Special Area';
+    const annex    = p.annex       || '—';
+    const reg      = p.regulation  || '—';
+
+    layer.bindTooltip(`
+      <div style="font-size:12px;line-height:1.5">
+        <strong>${name}</strong><br>
+        Type: ${type}<br>
+        Annex: ${annex} | Reg: ${reg}
+      </div>
+    `, { sticky: true, opacity: 0.92 });
   }
 }

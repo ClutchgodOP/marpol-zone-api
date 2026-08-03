@@ -1,184 +1,263 @@
 /**
- * globe.js — Three.js 3D rotating Earth for the hero section.
- * Uses a real Earth day-map texture (public three.js example asset) with
- * cloud layer, animated atmosphere, starfield, and a pulsing ship pin.
+ * globe.js
+ * Three.js rotating globe with pin support.
+ * Gracefully degrades if WebGL is unavailable.
+ * Never blocks dashboard initialization.
  */
-import * as THREE from 'three';
 
-const EARTH_TEXTURE  = 'https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg';
-const EARTH_SPECULAR = 'https://threejs.org/examples/textures/planets/earth_specular_2048.jpg';
-const EARTH_CLOUDS   = 'https://threejs.org/examples/textures/planets/earth_clouds_1024.png';
+'use strict';
+
+const EARTH_TEXTURE = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+const GLOBE_RADIUS  = 1.0;
+const ROTATE_SPEED  = 0.0013;
 
 export class GlobeController {
+  /**
+   * @param {string} canvasId - id of the <canvas> element
+   */
   constructor(canvasId) {
-    this._canvas  = document.getElementById(canvasId);
-    this._pinMesh = null;
-    this._pinRing = null;
-    this._running = true;
+    this._canvasId  = canvasId;
+    this._running   = false;
+    this._renderer  = null;
+    this._scene     = null;
+    this._camera    = null;
+    this._globe     = null;
+    this._pin       = null;
+    this._resizeObs = null;
+    this._rafId     = null;
+    this._ready     = false;
 
-    this._initRenderer();
-    this._initScene();
-    this._initGlobe();
-    this._initClouds();
-    this._initAtmosphere();
-    this._initStars();
-    this._initLights();
-    this._bindResize();
-    this._animate();
+    try {
+      this._canvas = document.getElementById(canvasId);
+      if (!this._canvas) {
+        console.warn(`[Globe] Canvas element #${canvasId} not found — globe disabled.`);
+        return;
+      }
+      this._initRenderer();
+      this._initScene();
+      this._bindResize();
+      this._running = true;
+      this._ready   = true;
+      this._animate();
+      console.info('[Globe] Initialized successfully.');
+    } catch (err) {
+      console.error('[Globe] Initialization failed — dashboard continues.', err);
+      this._running = false;
+    }
   }
 
+  // ─── Private ────────────────────────────────────────────────────────────────
+
   _initRenderer() {
-    this._renderer = new THREE.WebGLRenderer({ canvas: this._canvas, antialias: true, alpha: true });
+    if (!window.THREE) throw new Error('THREE.js not loaded.');
+
+    // Detect WebGL support before creating renderer
+    const testCanvas = document.createElement('canvas');
+    const gl = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
+    if (!gl) throw new Error('WebGL not available in this browser.');
+
+    this._renderer = new THREE.WebGLRenderer({
+      canvas              : this._canvas,
+      antialias           : true,
+      alpha               : true,
+      powerPreference     : 'high-performance',
+      failIfMajorPerformanceCaveat: false,
+    });
+
     this._renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this._renderer.setSize(this._canvas.clientWidth, this._canvas.clientHeight);
-    this._renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this._renderer.setSize(
+      this._canvas.clientWidth  || 400,
+      this._canvas.clientHeight || 400,
+    );
   }
 
   _initScene() {
+    const THREE = window.THREE;
+
     this._scene  = new THREE.Scene();
-    this._camera = new THREE.PerspectiveCamera(45, this._canvas.clientWidth / this._canvas.clientHeight, 0.1, 1000);
+    this._camera = new THREE.PerspectiveCamera(
+      45,
+      this._aspectRatio(),
+      0.1,
+      100,
+    );
     this._camera.position.set(0, 0, 2.8);
-  }
 
-  _initGlobe() {
-    const loader = new THREE.TextureLoader();
-    const geo = new THREE.SphereGeometry(1, 96, 96);
-    const mat = new THREE.MeshPhongMaterial({
-      map:         loader.load(EARTH_TEXTURE),
-      specularMap: loader.load(EARTH_SPECULAR),
-      specular:    new THREE.Color('#333333'),
-      shininess:   12,
-    });
-    this._globe = new THREE.Mesh(geo, mat);
-    this._scene.add(this._globe);
-  }
+    // Lights
+    const ambient = new THREE.AmbientLight(0x404060, 0.6);
+    this._scene.add(ambient);
 
-  _initClouds() {
-    const loader = new THREE.TextureLoader();
-    const geo = new THREE.SphereGeometry(1.012, 96, 96);
-    const mat = new THREE.MeshPhongMaterial({
-      map: loader.load(EARTH_CLOUDS),
-      transparent: true,
-      opacity: 0.35,
-      depthWrite: false,
-    });
-    this._clouds = new THREE.Mesh(geo, mat);
-    this._scene.add(this._clouds);
-  }
-
-  _initAtmosphere() {
-    const geo = new THREE.SphereGeometry(1.06, 64, 64);
-    const mat = new THREE.ShaderMaterial({
-      uniforms: { glowColor: { value: new THREE.Color('#00d4ff') } },
-      vertexShader: `
-        varying vec3 vNormal;
-        void main() {
-          vNormal = normalize(normalMatrix * normal);
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }`,
-      fragmentShader: `
-        varying vec3 vNormal;
-        uniform vec3 glowColor;
-        void main() {
-          float intensity = pow(0.65 - dot(vNormal, vec3(0,0,1.0)), 3.0);
-          gl_FragColor = vec4(glowColor, intensity * 0.9);
-        }`,
-      side: THREE.FrontSide,
-      blending: THREE.AdditiveBlending,
-      transparent: true,
-      depthWrite: false,
-    });
-    this._scene.add(new THREE.Mesh(geo, mat));
-  }
-
-  _initStars() {
-    const count = 2400;
-    const verts = [];
-    for (let i = 0; i < count; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi   = Math.acos(2 * Math.random() - 1);
-      const r     = 8 + Math.random() * 6;
-      verts.push(
-        r * Math.sin(phi) * Math.cos(theta),
-        r * Math.sin(phi) * Math.sin(theta),
-        r * Math.cos(phi)
-      );
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-    const mat = new THREE.PointsMaterial({ color: 0xaaccff, size: 0.045, transparent: true, opacity: 0.75 });
-    this._scene.add(new THREE.Points(geo, mat));
-  }
-
-  _initLights() {
-    const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(5, 3, 5);
     this._scene.add(sun);
-    this._scene.add(new THREE.AmbientLight(0x223344, 1.1));
+
+    const fill = new THREE.DirectionalLight(0x2244aa, 0.3);
+    fill.position.set(-5, -3, -5);
+    this._scene.add(fill);
+
+    // Globe mesh
+    const geo = new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64);
+    const loader = new THREE.TextureLoader();
+    const mat = new THREE.MeshPhongMaterial({
+      map        : loader.load(EARTH_TEXTURE, undefined, undefined, (err) => {
+        console.warn('[Globe] Earth texture failed to load.', err);
+      }),
+      specular   : new THREE.Color(0x333333),
+      shininess  : 15,
+    });
+
+    this._globe = new THREE.Mesh(geo, mat);
+    this._scene.add(this._globe);
+
+    // Atmosphere glow (additive sphere slightly larger)
+    const atmGeo = new THREE.SphereGeometry(GLOBE_RADIUS * 1.02, 64, 64);
+    const atmMat = new THREE.MeshPhongMaterial({
+      color       : 0x1a6bff,
+      side        : THREE.BackSide,
+      transparent : true,
+      opacity     : 0.12,
+    });
+    this._scene.add(new THREE.Mesh(atmGeo, atmMat));
   }
 
   _bindResize() {
-    new ResizeObserver(() => {
-      const w = this._canvas.clientWidth, h = this._canvas.clientHeight;
-      this._renderer.setSize(w, h, false);
-      this._camera.aspect = w / h;
-      this._camera.updateProjectionMatrix();
-    }).observe(this._canvas.parentElement);
+    const parent = this._canvas.parentElement;
+    if (!parent) return;
+
+    this._resizeObs = new ResizeObserver(() => this._onResize());
+    this._resizeObs.observe(parent);
+  }
+
+  _onResize() {
+    if (!this._renderer || !this._camera) return;
+    const w = this._canvas.clientWidth  || 400;
+    const h = this._canvas.clientHeight || 400;
+    this._renderer.setSize(w, h);
+    this._camera.aspect = w / h;
+    this._camera.updateProjectionMatrix();
+  }
+
+  _aspectRatio() {
+    const w = this._canvas.clientWidth  || 400;
+    const h = this._canvas.clientHeight || 400;
+    return w / h;
   }
 
   _animate() {
     if (!this._running) return;
-    requestAnimationFrame(() => this._animate());
-    this._globe.rotation.y  += 0.0013;
-    this._clouds.rotation.y += 0.0019;
-    if (this._pinMesh) {
-      this._pinMesh.rotation.y = this._globe.rotation.y;
-      const t = performance.now() * 0.003;
-      const scale = 1 + Math.sin(t) * 0.25;
-      if (this._pinRing) this._pinRing.scale.setScalar(scale);
+    this._rafId = requestAnimationFrame(() => this._animate());
+
+    if (this._globe) {
+      this._globe.rotation.y += ROTATE_SPEED;
     }
-    this._renderer.render(this._scene, this._camera);
+
+    if (this._renderer && this._scene && this._camera) {
+      this._renderer.render(this._scene, this._camera);
+    }
   }
 
-  setPin(lat, lon, status = 'SAFE') {
-    if (this._pinMesh) { this._scene.remove(this._pinMesh); this._pinMesh = null; }
+  // ─── Public API ─────────────────────────────────────────────────────────────
 
-    const phi   = (90 - lat)  * (Math.PI / 180);
-    const theta = (lon + 180) * (Math.PI / 180);
-    const r = 1.05;
-    const x = -r * Math.sin(phi) * Math.cos(theta);
-    const y =  r * Math.cos(phi);
-    const z =  r * Math.sin(phi) * Math.sin(theta);
+  /**
+   * Place a pin at geographic coordinates.
+   * @param {number} lat
+   * @param {number} lon
+   */
+  setPin(lat, lon) {
+    if (!this._ready || !this._scene) return;
 
-    const color = status === 'SAFE' ? 0x00e676 : 0xff6b35;
-    const group = new THREE.Group();
+    try {
+      const THREE = window.THREE;
 
-    const core = new THREE.Mesh(
-      new THREE.SphereGeometry(0.026, 16, 16),
-      new THREE.MeshBasicMaterial({ color })
-    );
-    core.position.set(x, y, z);
-    group.add(core);
+      // Remove previous pin
+      if (this._pin) {
+        this._scene.remove(this._pin);
+        this._pin.geometry?.dispose();
+        this._pin.material?.dispose();
+        this._pin = null;
+      }
 
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.035, 0.05, 32),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, side: THREE.DoubleSide })
-    );
-    ring.position.set(x, y, z);
-    ring.lookAt(new THREE.Vector3(x * 2, y * 2, z * 2));
-    group.add(ring);
-    this._pinRing = ring;
+      // Convert lat/lon to 3-D Cartesian on unit sphere
+      const phi   = (90 - lat)  * (Math.PI / 180);
+      const theta = (lon + 180) * (Math.PI / 180);
+      const r     = GLOBE_RADIUS + 0.04;
 
-    this._pinMesh = group;
-    this._scene.add(this._pinMesh);
+      const x = -r * Math.sin(phi) * Math.cos(theta);
+      const y =  r * Math.cos(phi);
+      const z =  r * Math.sin(phi) * Math.sin(theta);
 
-    const targetY = -theta + Math.PI;
-    this._globe.rotation.y  = targetY;
-    this._clouds.rotation.y = targetY;
+      const geo = new THREE.SphereGeometry(0.025, 12, 12);
+      const mat = new THREE.MeshBasicMaterial({ color: 0xff3333 });
+      this._pin = new THREE.Mesh(geo, mat);
+      this._pin.position.set(x, y, z);
+      this._scene.add(this._pin);
+    } catch (err) {
+      console.warn('[Globe] setPin failed.', err);
+    }
   }
 
+  /**
+   * Point the camera so lat/lon faces the viewer over `ms` milliseconds.
+   * @param {number} lat
+   * @param {number} lon
+   * @param {number} [ms=800]
+   */
+  focusOn(lat, lon, ms = 800) {
+    if (!this._ready || !this._globe) return;
+
+    try {
+      const targetY = -lon * (Math.PI / 180);
+      const targetX = -lat * (Math.PI / 180) * 0.4;
+      const startY  = this._globe.rotation.y;
+      const startX  = this._globe.rotation.x;
+      const start   = performance.now();
+
+      const tick = (now) => {
+        const t = Math.min((now - start) / ms, 1);
+        const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // easeInOut
+        if (this._globe) {
+          this._globe.rotation.y = startY + (targetY - startY) * ease;
+          this._globe.rotation.x = startX + (targetX - startX) * ease;
+        }
+        if (t < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    } catch (err) {
+      console.warn('[Globe] focusOn failed.', err);
+    }
+  }
+
+  /**
+   * Stop the animation loop and release all GPU resources.
+   */
   destroy() {
     this._running = false;
-    this._renderer.dispose();
+
+    if (this._rafId != null) {
+      cancelAnimationFrame(this._rafId);
+      this._rafId = null;
+    }
+
+    if (this._resizeObs) {
+      this._resizeObs.disconnect();
+      this._resizeObs = null;
+    }
+
+    if (this._globe) {
+      this._globe.geometry?.dispose();
+      this._globe.material?.dispose();
+    }
+
+    if (this._pin) {
+      this._pin.geometry?.dispose();
+      this._pin.material?.dispose();
+    }
+
+    if (this._renderer) {
+      this._renderer.dispose();
+      this._renderer = null;
+    }
+
+    console.info('[Globe] Destroyed and GPU resources released.');
   }
 }

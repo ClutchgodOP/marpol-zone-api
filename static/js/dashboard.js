@@ -1,594 +1,737 @@
 /**
- * dashboard.js — Volteo Maritime MARPOL Compliance Dashboard v4.0
- * Module boundaries: config | dom | auth | api | health | views | state
- *                     maps | history | panels | toasts | kpis | boot
+ * dashboard.js
+ * Main application controller for the Volteo Maritime MARPOL Compliance Dashboard.
+ *
+ * Boot sequence (all steps wrapped in try/catch — no single failure blocks load):
+ *   1. DOMContentLoaded fires
+ *   2. Loader shown (already visible in HTML)
+ *   3. Tab system initialized
+ *   4. Globe initialized (graceful degrade)
+ *   5. Leaflet map initialized (graceful degrade)
+ *   6. Zone overlay loaded (graceful degrade)
+ *   7. API health poll started
+ *   8. Event listeners attached
+ *   9. History rendered
+ *  10. Loader hidden  ← always reaches this step
  */
+
 'use strict';
 
 import { GlobeController } from './globe.js';
-import { ZonesOverlay }    from './zones-overlay.js';
+import { ZonesOverlay     } from './zones-overlay.js';
 
-/* ═══════════════════ CONFIG ═══════════════════ */
+// ─── Configuration ────────────────────────────────────────────────────────────
 
-const RAILWAY_API    = 'https://volteo-maritime-marpol-zone-api.up.railway.app';
-const DEMO_API_KEY   = 'volteo-demo-key-2026';
-const HEALTH_POLL_MS = 15_000;
-const HISTORY_LIMIT  = 30;
-const TILE_URL       = 'https://{s}.basemaps.cartocdn.com/dark_matter/{z}/{x}/{y}{r}.png';
-const TILE_OPTIONS   = { maxZoom: 19, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO' };
-const INITIAL_VIEW   = { center: [20, 0], zoom: 2 };
-const COLORS         = { safe: '#00e676', warn: '#ff6b35', primary: '#00d4ff' };
+const API_BASE      = 'https://volteo-maritime-marpol-zone-api.up.railway.app';
+const HEALTH_POLL_MS = 30_000;
+const API_TIMEOUT_MS = 15_000;
+const LOADER_MIN_MS  = 900;    // minimum display time so loader doesn't flash
 
-const apiBase = () => {
-  const override = document.getElementById('apiBase')?.value?.trim().replace(/\/+$/, '');
-  if (override) return override;
-  const origin  = window.location.origin;
-  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-  return isLocal || origin === RAILWAY_API ? origin : RAILWAY_API;
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Typed getElementById — returns null without throwing if missing. */
+const $  = (id) => document.getElementById(id);
+
+/** Read a numeric input value; returns NaN if invalid or missing. */
+const num = (id) => {
+  const el = $(id);
+  if (!el) return NaN;
+  const v = parseFloat(el.value);
+  return isNaN(v) ? NaN : v;
 };
 
-const ENDPOINTS = {
-  health:       '/health',
-  authToken:    '/auth/token',
-  checkZone:    '/api/v1/check-zone',
-  checkSlop:    '/api/v1/check-slop',
-  checkRoute:   '/api/v1/check-route',
-  zonesGeoJson: '/api/v1/zones/geojson',
-};
+/** Read a string input/select value; returns '' if missing. */
+const str = (id) => $(id)?.value?.trim() ?? '';
 
-/* ═══════════════════ DOM HELPERS ═══════════════════ */
+/** Append a class; no-op if element missing. */
+const addClass    = (id, cls) => $(id)?.classList.add(cls);
+const removeClass = (id, cls) => $(id)?.classList.remove(cls);
 
-const $        = id => document.getElementById(id);
-const escHtml  = v  => { const n = document.createElement('div'); n.textContent = String(v ?? ''); return n.innerHTML; };
-const fmt      = (v, d = 2) => (v == null || isNaN(+v)) ? '—' : (+v).toFixed(d);
-const safeArr  = v  => Array.isArray(v) ? v : [];
-const numFrom  = id => { const p = parseFloat($(id)?.value); return isNaN(p) ? null : p; };
-const textFrom = (id, fb = '') => $(id)?.value?.trim() || fb;
-const boolFrom = id => !!($(id)?.checked);
-
-/* ═══════════════════ TOASTS ═══════════════════ */
-
-function toast(message, type = 'info') {
-  const stack = $('toastStack');
-  if (!stack) return;
-  const el = document.createElement('div');
-  el.className = `toast toast-${type}`;
-  el.innerHTML = `<span>${escHtml(message)}</span>`;
-  stack.appendChild(el);
-  requestAnimationFrame(() => el.classList.add('show'));
-  setTimeout(() => {
-    el.classList.remove('show');
-    setTimeout(() => el.remove(), 300);
-  }, 4200);
-}
-
-/* ═══════════════════ AUTH (JWT) ═══════════════════ */
-
-const auth = (() => {
-  let _token = null, _expiry = 0, _inflight = null;
-
-  async function fetchToken() {
-    const url = `${apiBase()}${ENDPOINTS.authToken}?api_key=${DEMO_API_KEY}`;
-    let res;
-    try {
-      res = await fetch(url, { method: 'POST' });
-    } catch (e) {
-      throw new ApiProblem({ type: 'about:blank', title: 'Auth network error', status: 0,
-        detail: `Could not reach ${url}. ${e.message}`, instance: ENDPOINTS.authToken });
-    }
-    if (!res.ok) {
-      throw new ApiProblem({ type: 'about:blank', title: 'Authentication failed', status: res.status,
-        detail: `POST /auth/token returned HTTP ${res.status}.`, instance: ENDPOINTS.authToken });
-    }
-    const data = await res.json();
-    _token  = data.access_token;
-    _expiry = Date.now() + ((data.expires_in || 900) - 30) * 1000;
-    return _token;
-  }
-
-  return {
-    async getToken() {
-      if (_token && Date.now() < _expiry) return _token;
-      if (!_inflight) _inflight = fetchToken().finally(() => { _inflight = null; });
-      return _inflight;
-    },
-    invalidate() { _token = null; _expiry = 0; },
-  };
-})();
-
-/* ═══════════════════ API LAYER ═══════════════════ */
-
-class ApiProblem extends Error {
-  constructor(problem) {
-    super(problem.detail || problem.title || 'Request failed');
-    this.name = 'ApiProblem';
-    this.problem = problem;
-  }
-}
-
-async function request(path, opts = {}, _retry = false) {
-  const token = await auth.getToken();
-  const url = `${apiBase()}${path}`;
-  const headers = Object.assign({ 'Authorization': `Bearer ${token}` }, opts.headers || {});
-  const t0 = performance.now();
-  let res;
+/** Fetch with AbortController timeout. */
+async function fetchWithTimeout(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    res = await fetch(url, { ...opts, headers });
-  } catch (e) {
-    throw new ApiProblem({ type: 'about:blank', title: 'Network error', status: 0,
-      detail: `Could not reach API at ${url}. ${e.message}`, instance: path });
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
   }
-  recordLatency(performance.now() - t0);
+}
 
-  if (res.status === 401 && !_retry) {
-    auth.invalidate();
-    return request(path, opts, true);
+// ─── State ────────────────────────────────────────────────────────────────────
+
+let sharedMap    = null;   // L.Map instance
+let globe        = null;   // GlobeController instance
+let zonesOverlay = null;   // ZonesOverlay instance
+let sessionStats = { checks: 0, violations: 0 };
+let queryHistory = [];
+
+// ─── Boot ────────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const bootStart = performance.now();
+  console.info('[Boot] DOMContentLoaded — starting initialization.');
+
+  // ── 1. Tabs ────────────────────────────────────────────────────────────────
+  try {
+    initTabs();
+    console.info('[Boot] Tabs ready.');
+  } catch (err) {
+    console.error('[Boot] Tab init failed — continuing.', err);
   }
 
-  const ct   = res.headers.get('content-type') || '';
-  const body = ct.includes('json') ? await res.json().catch(() => null) : null;
-  if (res.ok) return body;
-  if (body?.title && 'status' in body) throw new ApiProblem(body);
-  throw new ApiProblem({
-    type: 'about:blank',
-    title: `Request failed (${res.status})`,
-    status: res.status,
-    detail: typeof body?.detail === 'string' ? body.detail : body?.detail ? JSON.stringify(body.detail) : `HTTP ${res.status}`,
-    instance: path,
+  // ── 2. Globe ───────────────────────────────────────────────────────────────
+  try {
+    if ($('globe-canvas')) {
+      globe = new GlobeController('globe-canvas');
+    }
+    console.info('[Boot] Globe ready.');
+  } catch (err) {
+    console.error('[Boot] Globe init failed — dashboard continues.', err);
+    globe = null;
+  }
+
+  // ── 3. Leaflet map ────────────────────────────────────────────────────────
+  try {
+    initMap();
+    console.info('[Boot] Map ready.');
+  } catch (err) {
+    console.error('[Boot] Map init failed — dashboard continues.', err);
+    sharedMap = null;
+  }
+
+  // ── 4. Zone overlay ───────────────────────────────────────────────────────
+  try {
+    if (sharedMap) {
+      zonesOverlay = new ZonesOverlay(sharedMap, `${API_BASE}/zones/geojson`);
+      zonesOverlay.load(); // non-blocking — fire and forget
+    }
+  } catch (err) {
+    console.error('[Boot] Zone overlay failed — continuing.', err);
+    zonesOverlay = null;
+  }
+
+  // ── 5. API health ─────────────────────────────────────────────────────────
+  try {
+    pollHealth();
+  } catch (err) {
+    console.error('[Boot] Health poll failed — continuing.', err);
+    setHealthStatus('offline');
+  }
+
+  // ── 6. Event listeners ────────────────────────────────────────────────────
+  try {
+    attachEventListeners();
+    console.info('[Boot] Event listeners attached.');
+  } catch (err) {
+    console.error('[Boot] Event listener setup failed — continuing.', err);
+  }
+
+  // ── 7. History ────────────────────────────────────────────────────────────
+  try {
+    loadHistory();
+    renderHistory();
+  } catch (err) {
+    console.error('[Boot] History init failed — continuing.', err);
+  }
+
+  // ── 8. Hide loader — ALWAYS runs ─────────────────────────────────────────
+  const elapsed  = performance.now() - bootStart;
+  const delay    = Math.max(0, LOADER_MIN_MS - elapsed);
+
+  setTimeout(() => {
+    const loader = $('loader');
+    if (loader) {
+      loader.classList.add('hidden');
+      // Remove from DOM after transition so it can't block interactions
+      loader.addEventListener('transitionend', () => loader.remove(), { once: true });
+      // Safety net: remove after 1.5 s even if transition never fires
+      setTimeout(() => loader?.remove(), 1500);
+    }
+    console.info(`[Boot] Dashboard ready in ${(performance.now() - bootStart).toFixed(0)} ms.`);
+  }, delay);
+});
+
+// ─── Tab System ───────────────────────────────────────────────────────────────
+
+/**
+ * Map each tab button's data-tab value → the corresponding panel element id.
+ * Adjust these if HTML ids change.
+ */
+const TAB_PANEL_MAP = {
+  zone    : 'panel-zone',
+  slop    : 'panel-slop',
+  route   : 'panel-route',
+  map     : 'panel-map',
+  history : 'panel-history',
+};
+
+function initTabs() {
+  const buttons = document.querySelectorAll('[data-tab]');
+  if (!buttons.length) {
+    console.warn('[Tabs] No tab buttons found.');
+    return;
+  }
+
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      switchTab(tab, buttons);
+    });
+  });
+
+  // Activate first tab
+  const firstBtn = buttons[0];
+  if (firstBtn) switchTab(firstBtn.dataset.tab, buttons);
+}
+
+function switchTab(tab, buttons) {
+  // Deactivate all buttons
+  buttons.forEach(b => b.classList.remove('active'));
+
+  // Activate clicked button
+  const activeBtn = document.querySelector(`[data-tab="${tab}"]`);
+  if (activeBtn) activeBtn.classList.add('active');
+
+  // Hide all panels
+  Object.values(TAB_PANEL_MAP).forEach(panelId => {
+    addClass(panelId, 'hidden');
+  });
+
+  // Show target panel
+  const panelId = TAB_PANEL_MAP[tab];
+  if (panelId) {
+    removeClass(panelId, 'hidden');
+  }
+
+  // Trigger map resize when map tab is activated
+  if (tab === 'map' && sharedMap) {
+    setTimeout(() => {
+      try { sharedMap.invalidateSize(); } catch (_) {}
+    }, 50);
+  }
+}
+
+// ─── Leaflet Map ──────────────────────────────────────────────────────────────
+
+function initMap() {
+  // HTML uses id="map"
+  const container = $('map');
+  if (!container) throw new Error('Map container #map not found in DOM.');
+  if (!window.L)  throw new Error('Leaflet not loaded.');
+
+  sharedMap = L.map('map', {
+    center        : [20, 0],
+    zoom          : 2,
+    zoomControl   : true,
+    attributionControl: false,
+  });
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom     : 18,
+    attribution : '© OpenStreetMap © CARTO',
+  }).addTo(sharedMap);
+
+  sharedMap.whenReady(() => {
+    sharedMap.invalidateSize();
+    console.info('[Map] Leaflet ready.');
+  });
+
+  // Update coordinate display on mouse move
+  sharedMap.on('mousemove', (e) => {
+    const coordEl = $('mapCoordsBar');
+    if (coordEl) {
+      coordEl.textContent =
+        `${e.latlng.lat.toFixed(4)}° N  ${e.latlng.lng.toFixed(4)}° E`;
+    }
   });
 }
 
-const postJson = (path, payload) =>
-  request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-
-/* ═══════════════════ HEALTH + KPIs ═══════════════════ */
-
-let latencySamples = [];
-function recordLatency(ms) {
-  latencySamples.push(ms);
-  if (latencySamples.length > 10) latencySamples.shift();
-  const avg = latencySamples.reduce((a, b) => a + b, 0) / latencySamples.length;
-  if ($('kpiLatency')) $('kpiLatency').textContent = `${Math.round(avg)} ms`;
-}
+// ─── Health Polling ───────────────────────────────────────────────────────────
 
 async function pollHealth() {
-  const dot = $('healthDot'), label = $('healthLabel');
-  if (!dot || !label) return;
-  try {
-    const data = await request(ENDPOINTS.health);
-    const ok = data?.status === 'ok' || data?.status === 'healthy';
-    dot.style.background = ok ? COLORS.safe : COLORS.warn;
-    dot.style.boxShadow  = ok ? `0 0 8px ${COLORS.safe}` : `0 0 8px ${COLORS.warn}`;
-    label.textContent = ok ? 'API Online' : 'API Degraded';
-    label.style.color = ok ? COLORS.safe : COLORS.warn;
-  } catch {
-    dot.style.background = COLORS.warn;
-    dot.style.boxShadow  = `0 0 8px ${COLORS.warn}`;
-    label.textContent = 'API Offline';
-    label.style.color = COLORS.warn;
-    toast('API appears offline. Retrying…', 'warn');
+  let intervalId = null;
+
+  const check = async () => {
+    try {
+      const t0  = performance.now();
+      const res = await fetchWithTimeout(`${API_BASE}/health`, {}, 8_000);
+      const ms  = Math.round(performance.now() - t0);
+
+      if (res.ok) {
+        setHealthStatus('online');
+        const el = $('kpiLatency');
+        if (el) el.textContent = `${ms} ms`;
+      } else {
+        setHealthStatus('degraded');
+      }
+    } catch (err) {
+      console.warn('[Health] API unreachable.', err.message);
+      setHealthStatus('offline');
+    }
+  };
+
+  await check();
+  intervalId = setInterval(check, HEALTH_POLL_MS);
+  return () => clearInterval(intervalId); // return cleanup fn
+}
+
+function setHealthStatus(status) {
+  const dot   = $('healthDot');
+  const label = $('healthLabel');
+
+  const MAP = {
+    online   : { cls: 'online',   text: 'API Online'   },
+    degraded : { cls: 'degraded', text: 'API Degraded' },
+    offline  : { cls: 'offline',  text: 'API Offline'  },
+  };
+
+  const s = MAP[status] ?? MAP.offline;
+
+  if (dot) {
+    dot.className = `health-dot ${s.cls}`;
+  }
+  if (label) {
+    label.textContent = s.text;
   }
 }
 
+// ─── Event Listeners ─────────────────────────────────────────────────────────
+
+function attachEventListeners() {
+  // Tab buttons are wired in initTabs().
+
+  // Clear history button — HTML may use onclick="clearHistory()" OR we wire it here.
+  const clearBtn = $('clearHistoryBtn') || document.querySelector('[onclick*="clearHistory"]');
+  if (clearBtn) {
+    clearBtn.removeAttribute('onclick');
+    clearBtn.addEventListener('click', clearHistory);
+  }
+
+  // Wire form buttons — these may use inline onclick in the HTML.
+  // We expose globals so inline onclick attrs still work even without wiring here.
+  window.checkZone  = submitZone;
+  window.checkSlop  = submitSlop;
+  window.checkRoute = submitRoute;
+  window.clearHistory = clearHistory;
+
+  // If buttons exist with IDs, also wire directly for resilience
+  $('zoneSubmit') ?.addEventListener('click', submitZone);
+  $('slopSubmit') ?.addEventListener('click', submitSlop);
+  $('routeSubmit')?.addEventListener('click', submitRoute);
+}
+
+// ─── Zone Check ───────────────────────────────────────────────────────────────
+
+async function submitZone() {
+  const lat = num('zoneLatInput');
+  const lon = num('zoneLonInput');
+
+  if (isNaN(lat) || isNaN(lon)) {
+    showResult('zoneResult', 'error', '⚠️ Please enter valid latitude and longitude.');
+    return;
+  }
+
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    showResult('zoneResult', 'error', '⚠️ Coordinates out of range.');
+    return;
+  }
+
+  showResult('zoneResult', 'loading', 'Checking zone…');
+
+  try {
+    const res  = await fetchWithTimeout(
+      `${API_BASE}/check-zone?lat=${lat}&lon=${lon}`,
+    );
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+    // Update globe
+    globe?.setPin(lat, lon);
+    globe?.focusOn(lat, lon);
+
+    // Update map
+    placeMapMarker(lat, lon, 'zone');
+
+    // Update KPIs
+    sessionStats.checks++;
+    if (!data.compliant) sessionStats.violations++;
+    updateKpis();
+
+    // Record history
+    addHistory({ type: 'zone', lat, lon, result: data, ts: Date.now() });
+
+    renderZoneResult(data);
+  } catch (err) {
+    console.error('[Zone] Check failed.', err);
+    showResult('zoneResult', 'error', `❌ Request failed: ${err.message}`);
+  }
+}
+
+function renderZoneResult(data) {
+  const compliant = data.compliant ?? data.is_compliant ?? true;
+  const zones     = data.zones     ?? data.matched_zones ?? [];
+
+  let html = `
+    <div class="result-status ${compliant ? 'compliant' : 'violation'}">
+      ${compliant
+        ? '✅ <strong>COMPLIANT</strong> — Position is outside restricted zones.'
+        : '🚫 <strong>VIOLATION</strong> — Position is within a restricted zone.'}
+    </div>`;
+
+  if (zones.length) {
+    html += '<ul class="zone-list">';
+    for (const z of zones) {
+      const name = z.name || z.zone_name || z;
+      const type = z.zone_type || '';
+      html += `<li><strong>${name}</strong>${type ? ` — ${type}` : ''}</li>`;
+    }
+    html += '</ul>';
+  }
+
+  showResult('zoneResult', compliant ? 'compliant' : 'violation', html, true);
+}
+
+// ─── Slop Check ───────────────────────────────────────────────────────────────
+
+async function submitSlop() {
+  const lat        = num('slopLatInput');
+  const lon        = num('slopLonInput');
+  const oilContent = num('slopOilContent');
+
+  if (isNaN(lat) || isNaN(lon)) {
+    showResult('slopResult', 'error', '⚠️ Please enter valid coordinates.');
+    return;
+  }
+
+  showResult('slopResult', 'loading', 'Evaluating slop discharge…');
+
+  try {
+    const body = {
+      lat,
+      lon,
+      oil_content_ppm : isNaN(oilContent) ? undefined : oilContent,
+    };
+
+    const res  = await fetchWithTimeout(`${API_BASE}/check-slop`, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+    globe?.setPin(lat, lon);
+    globe?.focusOn(lat, lon);
+    placeMapMarker(lat, lon, 'slop');
+
+    sessionStats.checks++;
+    if (!(data.compliant ?? data.is_compliant ?? true)) sessionStats.violations++;
+    updateKpis();
+
+    addHistory({ type: 'slop', lat, lon, result: data, ts: Date.now() });
+    renderSlopResult(data);
+  } catch (err) {
+    console.error('[Slop] Check failed.', err);
+    showResult('slopResult', 'error', `❌ Request failed: ${err.message}`);
+  }
+}
+
+function renderSlopResult(data) {
+  const compliant = data.compliant ?? data.is_compliant ?? true;
+  const limit     = data.limit_ppm   ?? data.oil_limit_ppm ?? '—';
+  const actual    = data.oil_content_ppm ?? '—';
+
+  const html = `
+    <div class="result-status ${compliant ? 'compliant' : 'violation'}">
+      ${compliant
+        ? '✅ <strong>DISCHARGE PERMITTED</strong>'
+        : '🚫 <strong>DISCHARGE PROHIBITED</strong>'}
+    </div>
+    <div class="result-detail">
+      Oil Content: <strong>${actual} ppm</strong> /
+      Limit: <strong>${limit} ppm</strong>
+    </div>
+    ${data.reason ? `<div class="result-reason">${data.reason}</div>` : ''}
+  `;
+
+  showResult('slopResult', compliant ? 'compliant' : 'violation', html, true);
+}
+
+// ─── Route Check ──────────────────────────────────────────────────────────────
+
+async function submitRoute() {
+  // HTML uses a textarea with id="routeWaypoints" containing JSON array or newline coords
+  const raw = str('routeWaypoints');
+
+  if (!raw) {
+    showResult('routeResult', 'error', '⚠️ Please enter route waypoints.');
+    return;
+  }
+
+  let waypoints;
+  try {
+    waypoints = parseWaypoints(raw);
+  } catch (err) {
+    showResult('routeResult', 'error', `⚠️ Invalid waypoints format: ${err.message}`);
+    return;
+  }
+
+  if (waypoints.length < 2) {
+    showResult('routeResult', 'error', '⚠️ Route requires at least 2 waypoints.');
+    return;
+  }
+
+  showResult('routeResult', 'loading', 'Analysing route…');
+
+  try {
+    const res  = await fetchWithTimeout(`${API_BASE}/check-route`, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ waypoints }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+    renderRouteOnMap(waypoints);
+
+    sessionStats.checks++;
+    if (!(data.compliant ?? true)) sessionStats.violations++;
+    updateKpis();
+
+    addHistory({ type: 'route', waypoints, result: data, ts: Date.now() });
+    renderRouteResult(data);
+  } catch (err) {
+    console.error('[Route] Check failed.', err);
+    showResult('routeResult', 'error', `❌ Request failed: ${err.message}`);
+  }
+}
+
+/**
+ * Parse waypoints from:
+ * - JSON array: [[lat,lon],[lat,lon]]
+ * - Newline-separated: "lat,lon\nlat,lon"
+ */
+function parseWaypoints(raw) {
+  raw = raw.trim();
+
+  if (raw.startsWith('[')) {
+    const parsed = JSON.parse(raw);
+    return parsed.map((p, i) => {
+      if (Array.isArray(p) && p.length >= 2) return { lat: p[0], lon: p[1] };
+      if (typeof p === 'object' && 'lat' in p) return p;
+      throw new Error(`Invalid waypoint at index ${i}`);
+    });
+  }
+
+  // Newline-separated "lat,lon"
+  return raw.split('\n').map((line, i) => {
+    const parts = line.split(',').map(s => parseFloat(s.trim()));
+    if (parts.length < 2 || parts.some(isNaN)) {
+      throw new Error(`Invalid waypoint at line ${i + 1}: "${line}"`);
+    }
+    return { lat: parts[0], lon: parts[1] };
+  });
+}
+
+function renderRouteResult(data) {
+  const compliant  = data.compliant ?? true;
+  const violations = data.violations ?? data.zone_violations ?? [];
+
+  let html = `
+    <div class="result-status ${compliant ? 'compliant' : 'violation'}">
+      ${compliant
+        ? '✅ <strong>ROUTE COMPLIANT</strong> — No MARPOL violations detected.'
+        : `🚫 <strong>ROUTE VIOLATION</strong> — ${violations.length} segment(s) affected.`}
+    </div>`;
+
+  if (violations.length) {
+    html += '<ul class="zone-list">';
+    for (const v of violations) {
+      const zone = v.zone_name || v.zone || v;
+      html += `<li>${zone}</li>`;
+    }
+    html += '</ul>';
+  }
+
+  showResult('routeResult', compliant ? 'compliant' : 'violation', html, true);
+}
+
+// ─── Map Utilities ────────────────────────────────────────────────────────────
+
+let _mapMarkers = [];
+let _routeLayer = null;
+
+function placeMapMarker(lat, lon, type) {
+  if (!sharedMap) return;
+
+  try {
+    // Remove previous marker of same type
+    _mapMarkers = _mapMarkers.filter(({ marker, t }) => {
+      if (t === type) {
+        sharedMap.removeLayer(marker);
+        return false;
+      }
+      return true;
+    });
+
+    const colors = { zone: '#ff6b35', slop: '#00d4aa', route: '#4ecdc4' };
+    const color  = colors[type] ?? '#ffffff';
+
+    const icon = L.divIcon({
+      className : '',
+      html      : `<div style="
+        width:14px;height:14px;border-radius:50%;
+        background:${color};border:2px solid #fff;
+        box-shadow:0 0 8px ${color}88;
+      "></div>`,
+      iconSize  : [14, 14],
+      iconAnchor: [7, 7],
+    });
+
+    const marker = L.marker([lat, lon], { icon }).addTo(sharedMap);
+    marker.bindPopup(`${type.toUpperCase()}: ${lat.toFixed(4)}, ${lon.toFixed(4)}`);
+    _mapMarkers.push({ marker, t: type });
+
+    sharedMap.setView([lat, lon], Math.max(sharedMap.getZoom(), 4), { animate: true });
+  } catch (err) {
+    console.warn('[Map] placeMapMarker failed.', err);
+  }
+}
+
+function renderRouteOnMap(waypoints) {
+  if (!sharedMap) return;
+
+  try {
+    if (_routeLayer) {
+      sharedMap.removeLayer(_routeLayer);
+      _routeLayer = null;
+    }
+
+    const latlngs = waypoints.map(wp => [wp.lat, wp.lon]);
+    _routeLayer = L.polyline(latlngs, {
+      color  : '#00d4aa',
+      weight : 3,
+      opacity: 0.85,
+      dashArray: '6 4',
+    }).addTo(sharedMap);
+
+    sharedMap.fitBounds(_routeLayer.getBounds(), { padding: [30, 30] });
+  } catch (err) {
+    console.warn('[Map] renderRouteOnMap failed.', err);
+  }
+}
+
+// ─── KPI Updates ──────────────────────────────────────────────────────────────
+
 function updateKpis() {
-  const list = historyLoad();
-  const total = list.length;
-  const safeCount = list.filter(h => h.status === 'SAFE').length;
-  if ($('kpiChecks')) $('kpiChecks').textContent = String(total);
-  if ($('kpiCompliance')) $('kpiCompliance').textContent = total ? `${Math.round((safeCount / total) * 100)}%` : '—';
+  const checksEl     = $('kpiChecks');
+  const violationsEl = $('kpiViolations');
+  const zonesEl      = $('kpiZones');
+
+  if (checksEl)     checksEl.textContent     = sessionStats.checks;
+  if (violationsEl) violationsEl.textContent = sessionStats.violations;
+  if (zonesEl)      zonesEl.textContent      = sessionStats.checks - sessionStats.violations;
 }
 
-/* ═══════════════════ VIEW RENDERERS ═══════════════════ */
+// ─── Result Card Helper ───────────────────────────────────────────────────────
 
-function statusBadge(status) {
-  const safe = (status === 'SAFE');
-  return `<span class="status-badge ${safe ? 'badge-safe' : 'badge-restricted'}">
-    ${safe ? '✓ SAFE' : '✗ RESTRICTED'}
-  </span>`;
+/**
+ * @param {string}  cardId   - element ID of the result card
+ * @param {string}  state    - 'loading' | 'error' | 'compliant' | 'violation'
+ * @param {string}  html     - inner HTML to render
+ * @param {boolean} [raw]    - if true, html is already safe markup (not escaped)
+ */
+function showResult(cardId, state, html, raw = false) {
+  const el = $(cardId);
+  if (!el) return;
+
+  el.className = `result-card ${state}`;
+  el.classList.remove('hidden');
+
+  const inner = raw ? html : `<p>${html}</p>`;
+
+  if (state === 'loading') {
+    el.innerHTML = `
+      <div class="result-loading">
+        <span class="spinner"></span>
+        <span>${html}</span>
+      </div>`;
+  } else {
+    el.innerHTML = inner;
+  }
 }
 
-function ruleRow(rule) {
-  const pass = rule.passed;
-  return `
-    <div class="rule-row ${pass ? 'rule-pass' : 'rule-fail'}">
-      <span class="rule-icon">${pass ? '✓' : '✗'}</span>
-      <div class="rule-body">
-        <div class="rule-name">${escHtml(rule.rule_name)}</div>
-        <div class="rule-vals">
-          <span>Got: <strong>${escHtml(rule.actual_value)}</strong></span>
-          <span>Req: <strong>${escHtml(rule.required_value)}</strong></span>
-        </div>
-        ${rule.note ? `<div class="rule-note">${escHtml(rule.note)}</div>` : ''}
-      </div>
-    </div>`;
+// ─── History ──────────────────────────────────────────────────────────────────
+
+const HISTORY_KEY    = 'marpol_history';
+const HISTORY_LIMIT  = 50;
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    queryHistory = raw ? JSON.parse(raw) : [];
+  } catch {
+    queryHistory = [];
+  }
 }
 
-function zonesTable(zones) {
-  if (!zones.length) return '<p class="empty-state">No active MARPOL zones at this position.</p>';
-  return `
-    <table class="data-table">
-      <thead><tr><th>Zone</th><th>Annex</th><th>Waste Type</th><th>Restriction</th></tr></thead>
-      <tbody>
-        ${zones.map(z => `
-          <tr>
-            <td>${escHtml(z.zone_name)}</td>
-            <td>${escHtml(z.annex)}</td>
-            <td>${escHtml(z.waste_type)}</td>
-            <td>${escHtml(z.restriction)}</td>
-          </tr>`).join('')}
-      </tbody>
-    </table>`;
+function saveHistory() {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(queryHistory.slice(0, HISTORY_LIMIT)));
+  } catch (err) {
+    console.warn('[History] localStorage write failed.', err);
+  }
 }
 
-function disposalList(items) {
-  if (!items.length) return '';
-  return items.map(item => `
-    <div class="disposal-item ${item.allowed ? 'allowed' : 'disallowed'}">
-      <span>${item.allowed ? '✓' : '✗'}</span>
-      <div><strong>${escHtml(item.label)}</strong><p>${escHtml(item.reason)}</p></div>
-    </div>`).join('');
-}
-
-function routeMetrics(d) {
-  return `
-    <div class="route-metrics">
-      <div class="metric"><span>Cross-track</span><strong>${fmt(d.cross_track_distance_nm)} NM</strong></div>
-      <div class="metric"><span>Progress</span><strong>${fmt(d.route_progress_percent, 1)}%</strong></div>
-      <div class="metric"><span>Route Length</span><strong>${fmt(d.total_route_distance_nm)} NM</strong></div>
-      <div class="metric"><span>Along-track</span><strong>${fmt(d.along_track_distance_nm)} NM</strong></div>
-    </div>`;
-}
-
-function skeleton() {
-  return `<div class="skeleton-block"></div><div class="skeleton-block short"></div><div class="skeleton-block"></div>`;
-}
-
-/* ═══════════════════ STATE MACHINE ═══════════════════ */
-
-const mkState = () => ({ loading: false, data: null, error: null });
-const zoneSt  = mkState(), slopSt = mkState(), routeSt = mkState();
-
-function setState(st, patch, renderFn) {
-  Object.assign(st, patch);
-  renderFn(st);
-}
-
-/* ═══════════════════ UNIFIED LEAFLET MAP ═══════════════════ */
-
-let sharedMap, deckOverlay;
-const layerGroups = { zone: null, slop: null, route: null };
-let markers = { zone: null, slop: null, route: null };
-let routePolyline = null;
-let activePanel = 'zone';
-
-function shipIcon(status) {
-  const color = status === 'SAFE' ? COLORS.safe : COLORS.warn;
-  return L.divIcon({
-    className: '',
-    html: `<div class="ship-marker" style="--c:${color}">
-      <div class="ship-pulse"></div>
-      <div class="ship-dot"></div>
-    </div>`,
-    iconSize: [34, 34], iconAnchor: [17, 17],
-  });
-}
-
-function initMaps() {
-  // Leaflet must own its own dedicated container. Initializing it on
-  // #sharedMap (the outer wrapper) wipes out the sibling overlay elements
-  // (#mapLoader, #zoneLegend, #mapCoordsBar, #mapCrosshair) that Leaflet's
-  // DOM takeover clears from any container it binds to directly.
-  sharedMap = L.map('leafletMap', { zoomControl: true, attributionControl: true })
-    .setView(INITIAL_VIEW.center, INITIAL_VIEW.zoom);
-  L.tileLayer(TILE_URL, TILE_OPTIONS).addTo(sharedMap);
-
-  layerGroups.zone  = L.layerGroup().addTo(sharedMap);
-  layerGroups.slop  = L.layerGroup();
-  layerGroups.route = L.layerGroup();
-
-  sharedMap.on('click', e => {
-    const lat = e.latlng.lat.toFixed(4), lon = e.latlng.lng.toFixed(4);
-    if (activePanel === 'zone'  && $('lat'))      { $('lat').value = lat;      $('lon').value = lon; }
-    if (activePanel === 'slop'  && $('slopLat'))  { $('slopLat').value = lat;  $('slopLon').value = lon; }
-    if (activePanel === 'route' && $('routeLat')) { $('routeLat').value = lat; $('routeLon').value = lon; }
-    if ($('mapCoordsBar')) $('mapCoordsBar').textContent = `Lat ${lat} \u00a0 Lon ${lon}`;
-  });
-
-  sharedMap.on('mousemove', e => {
-    if (!$('mapCoordsBar')) return;
-    $('mapCoordsBar').textContent = `Lat ${e.latlng.lat.toFixed(4)} \u00a0 Lon ${e.latlng.lng.toFixed(4)}`;
-  });
-
-  // deck.gl overlay must render into the SAME container Leaflet uses,
-  // otherwise its absolutely-positioned canvas won't align with the tiles.
-  deckOverlay = new ZonesOverlay('leafletMap');
-
-  // Tiles have loaded their first frame — dismiss the loading shimmer.
-  sharedMap.whenReady(() => {
-    $('mapLoader')?.classList.add('hidden');
-  });
-}
-
-
-function loadZonesOverlay() {
-  deckOverlay?.load(`${apiBase()}${ENDPOINTS.zonesGeoJson}`);
-}
-
-function switchPanel(panelKey) {
-  Object.entries(layerGroups).forEach(([key, group]) => {
-    if (key === panelKey) sharedMap.addLayer(group);
-    else sharedMap.removeLayer(group);
-  });
-  activePanel = panelKey;
-  setTimeout(() => sharedMap.invalidateSize(), 60);
-}
-
-function placeMarker(group, lat, lon, status, prevKey) {
-  if (markers[prevKey]) group.removeLayer(markers[prevKey]);
-  const marker = L.marker([lat, lon], { icon: shipIcon(status) }).addTo(group)
-    .bindPopup(`<strong>${status === 'SAFE' ? '✓ SAFE' : '✗ RESTRICTED'}</strong><br>${fmt(lat, 4)}°, ${fmt(lon, 4)}°`);
-  markers[prevKey] = marker;
-  sharedMap.setView([lat, lon], Math.max(sharedMap.getZoom(), 5), { animate: true });
-  return marker;
-}
-
-/* ═══════════════════ HISTORY ═══════════════════ */
-
-const HISTORY_KEY = 'marpol_history_v4';
-
-function historyLoad() {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; }
-}
-
-function historyAdd(entry) {
-  const list = [{ ...entry, time: new Date().toLocaleTimeString(), timestamp: Date.now() }, ...historyLoad()].slice(0, HISTORY_LIMIT);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+function addHistory(entry) {
+  queryHistory.unshift(entry);
+  if (queryHistory.length > HISTORY_LIMIT) queryHistory.length = HISTORY_LIMIT;
+  saveHistory();
   renderHistory();
-  updateKpis();
+}
+
+function clearHistory() {
+  queryHistory = [];
+  saveHistory();
+  renderHistory();
 }
 
 function renderHistory() {
   const el = $('historyList');
   if (!el) return;
-  const list = historyLoad();
-  if (!list.length) {
-    el.innerHTML = '<p class="empty-state">No checks yet. Run a zone, slop, or route check above.</p>';
+
+  if (!queryHistory.length) {
+    el.innerHTML = '<p class="history-empty">No queries yet. Run a check to see history.</p>';
     return;
   }
-  el.innerHTML = list.map((h, i) => `
-    <div class="history-item" data-idx="${i}">
-      <div class="history-meta">
-        <span class="history-type">${escHtml(h.type)}</span>
-        <span class="history-time">${escHtml(h.time)}</span>
-      </div>
-      <div style="margin: 0.25rem 0">${statusBadge(h.status)}</div>
-      <div class="history-coords">${fmt(h.lat, 4)}°, ${fmt(h.lon, 4)}°</div>
-      <div class="history-summary">${escHtml(h.summary)}</div>
-    </div>`).join('');
 
-  el.querySelectorAll('.history-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const h = list[+item.dataset.idx];
-      if (h) sharedMap.setView([h.lat, h.lon], 6, { animate: true });
-    });
-  });
+  el.innerHTML = queryHistory.map((entry, i) => {
+    const date     = new Date(entry.ts).toLocaleString();
+    const compliant = entry.result?.compliant ?? entry.result?.is_compliant ?? true;
+    const badge    = compliant
+      ? '<span class="badge compliant">✅ COMPLIANT</span>'
+      : '<span class="badge violation">🚫 VIOLATION</span>';
+
+    let detail = '';
+    if (entry.type === 'zone' || entry.type === 'slop') {
+      detail = `${entry.lat?.toFixed(4) ?? '—'}°, ${entry.lon?.toFixed(4) ?? '—'}°`;
+    } else if (entry.type === 'route') {
+      detail = `${entry.waypoints?.length ?? 0} waypoints`;
+    }
+
+    return `
+      <div class="history-item" data-index="${i}">
+        <div class="history-meta">
+          <span class="history-type">${entry.type.toUpperCase()}</span>
+          ${badge}
+          <span class="history-time">${date}</span>
+        </div>
+        <div class="history-detail">${detail}</div>
+      </div>`;
+  }).join('');
 }
-
-/* ═══════════════════ ZONE PANEL ═══════════════════ */
-
-function renderZone(st) {
-  const out = $('zoneResult');
-  if (!out) return;
-  if (st.loading) { out.innerHTML = skeleton(); return; }
-  if (st.error)   { out.innerHTML = `<div class="error-box">⚠ ${escHtml(st.error)}</div>`; return; }
-  if (!st.data)   { out.innerHTML = '<p class="empty-state">Enter a position and run a check.</p>'; return; }
-  const d = st.data;
-  out.innerHTML = `
-    <div class="result-header">
-      ${statusBadge(d.zone_status)}
-      <span class="result-dist">${fmt(d.distance_to_nearest_land_nm)} NM from nearest land</span>
-    </div>
-    <p class="result-summary">${escHtml(d.summary)}</p>
-    <div class="section-label">Rules Checklist</div>
-    <div class="rule-list">${safeArr(d.rules_checklist).map(ruleRow).join('') || '<p class="empty-state">No rules evaluated.</p>'}</div>
-    <div class="section-label">Active Zones</div>
-    ${zonesTable(safeArr(d.active_zones))}
-    <div class="section-label">Disposal Assessment</div>
-    <div class="disposal-list">${disposalList(safeArr(d.disposal_assessment))}</div>
-  `;
-}
-
-async function submitZone(globe) {
-  const lat = numFrom('lat'), lon = numFrom('lon');
-  if (lat == null || lon == null) { toast('Please enter valid latitude and longitude.', 'warn'); return; }
-
-  setState(zoneSt, { loading: true, error: null, data: null }, renderZone);
-  try {
-    const data = await postJson(ENDPOINTS.checkZone, {
-      ship_id: textFrom('shipId', 'SHIP_001'), latitude: lat, longitude: lon,
-      waste_type_filter: textFrom('wasteFilter') || null,
-    });
-    setState(zoneSt, { loading: false, data, error: null }, renderZone);
-    globe?.setPin(lat, lon, data.zone_status);
-    deckOverlay?.setShipPosition(lat, lon, data.zone_status);
-    placeMarker(layerGroups.zone, lat, lon, data.zone_status, 'zone');
-    historyAdd({ type: 'Zone Check', lat, lon, status: data.zone_status, summary: data.summary });
-    toast(`Zone check complete: ${data.zone_status}`, data.zone_status === 'SAFE' ? 'success' : 'warn');
-  } catch (e) {
-    setState(zoneSt, { loading: false, data: null, error: e.message }, renderZone);
-    toast(e.message, 'error');
-  }
-}
-
-/* ═══════════════════ SLOP PANEL ═══════════════════ */
-
-function renderSlop(st) {
-  const out = $('slopResult');
-  if (!out) return;
-  if (st.loading) { out.innerHTML = skeleton(); return; }
-  if (st.error)   { out.innerHTML = `<div class="error-box">⚠ ${escHtml(st.error)}</div>`; return; }
-  if (!st.data)   { out.innerHTML = '<p class="empty-state">Enter discharge parameters and run a check.</p>'; return; }
-  const d = st.data;
-  out.innerHTML = `
-    <div class="result-header">
-      ${statusBadge(d.zone_status)}
-      <span class="result-dist">${fmt(d.distance_to_nearest_land_nm)} NM from nearest land</span>
-    </div>
-    <p class="result-summary">${escHtml(d.summary)}</p>
-    <div class="section-label">Rules Checklist</div>
-    <div class="rule-list">${safeArr(d.rules_checklist).map(ruleRow).join('') || '<p class="empty-state">No rules evaluated.</p>'}</div>
-    <div class="section-label">Active Oil / NLS Zones</div>
-    ${zonesTable(safeArr(d.active_zones))}
-  `;
-}
-
-async function submitSlop() {
-  const lat = numFrom('slopLat'), lon = numFrom('slopLon');
-  if (lat == null || lon == null) { toast('Please enter valid latitude and longitude.', 'warn'); return; }
-
-  const cargo_is_nls = boolFrom('cargoIsNls');
-  const nls_category = cargo_is_nls ? (textFrom('nlsCategory') || null) : null;
-
-  setState(slopSt, { loading: true, error: null, data: null }, renderSlop);
-  try {
-    const data = await postJson(ENDPOINTS.checkSlop, {
-      ship_id: textFrom('slopShipId', 'SHIP_001'), latitude: lat, longitude: lon,
-      ship_speed_knots: numFrom('shipSpeed') ?? 0,
-      oil_content_ppm: numFrom('oilContent') ?? 0,
-      discharge_rate_lpnm: numFrom('dischargeRate') ?? 0,
-      tank_capacity_m3: numFrom('tankCapacity') ?? 0,
-      odmcs_operational: boolFrom('odmcsOp'),
-      cargo_is_nls, nls_category,
-    });
-    setState(slopSt, { loading: false, data, error: null }, renderSlop);
-    placeMarker(layerGroups.slop, lat, lon, data.zone_status, 'slop');
-    historyAdd({ type: 'Slop Check', lat, lon, status: data.zone_status, summary: data.summary });
-    toast(`Slop check complete: ${data.zone_status}`, data.zone_status === 'SAFE' ? 'success' : 'warn');
-  } catch (e) {
-    setState(slopSt, { loading: false, data: null, error: e.message }, renderSlop);
-    toast(e.message, 'error');
-  }
-}
-
-/* ═══════════════════ ROUTE PANEL ═══════════════════ */
-
-function renderRoute(st) {
-  const out = $('routeResult');
-  if (!out) return;
-  if (st.loading) { out.innerHTML = skeleton(); return; }
-  if (st.error)   { out.innerHTML = `<div class="error-box">⚠ ${escHtml(st.error)}</div>`; return; }
-  if (!st.data)   { out.innerHTML = '<p class="empty-state">Set current position and route endpoints, then run a check.</p>'; return; }
-  const d = st.data;
-  const routeSafe = (d.route_status === 'ON_ROUTE');
-
-  out.innerHTML = `
-    <div class="result-header">
-      ${statusBadge(routeSafe ? 'SAFE' : 'RESTRICTED')}
-      <span class="result-dist">${escHtml(d.route_status)}</span>
-    </div>
-    <p class="result-summary">${escHtml(d.summary)}</p>
-    ${routeMetrics(d)}
-    ${safeArr(d.zones_crossed).length ? `<div class="section-label">Zones Crossed</div>${zonesTable(d.zones_crossed)}` : ''}
-  `;
-
-  if (safeArr(d.route_points).length >= 2) {
-    if (routePolyline) layerGroups.route.removeLayer(routePolyline);
-    routePolyline = L.polyline(d.route_points, { color: COLORS.primary, weight: 3, opacity: 0.85 }).addTo(layerGroups.route);
-    sharedMap.fitBounds(routePolyline.getBounds(), { padding: [40, 40] });
-  }
-
-  const rLat = numFrom('routeLat'), rLon = numFrom('routeLon');
-  if (rLat != null && rLon != null) {
-    placeMarker(layerGroups.route, rLat, rLon, routeSafe ? 'SAFE' : 'RESTRICTED', 'route');
-  }
-}
-
-async function submitRoute() {
-  setState(routeSt, { loading: true, error: null, data: null }, renderRoute);
-  try {
-    const data = await postJson(ENDPOINTS.checkRoute, {
-      ship_id: textFrom('routeShipId', 'SHIP_001'),
-      latitude: numFrom('routeLat') ?? 0, longitude: numFrom('routeLon') ?? 0,
-      origin_port: textFrom('originPort') || null, destination_port: textFrom('destPort') || null,
-      origin_latitude: numFrom('originLat'), origin_longitude: numFrom('originLon'),
-      destination_latitude: numFrom('destLat'), destination_longitude: numFrom('destLon'),
-      corridor_width_nm: numFrom('corridorWidth') ?? 25,
-    });
-    setState(routeSt, { loading: false, data, error: null }, renderRoute);
-    historyAdd({
-      type: 'Route Check', lat: numFrom('routeLat') ?? 0, lon: numFrom('routeLon') ?? 0,
-      status: data.route_status === 'ON_ROUTE' ? 'SAFE' : 'RESTRICTED', summary: data.summary,
-    });
-    toast(`Route check complete: ${data.route_status}`, data.route_status === 'ON_ROUTE' ? 'success' : 'warn');
-  } catch (e) {
-    setState(routeSt, { loading: false, data: null, error: e.message }, renderRoute);
-    toast(e.message, 'error');
-  }
-}
-
-/* ═══════════════════ LEGEND / FILTER ═══════════════════ */
-
-function bindLegend() {
-  const boxes = document.querySelectorAll('#zoneLegend input[type=checkbox]');
-  const apply = () => {
-    const active = new Set([...document.querySelectorAll('#zoneLegend input:checked')].map(c => c.dataset.annex));
-    deckOverlay?.setAnnexFilter(active);
-  };
-  boxes.forEach(cb => cb.addEventListener('change', apply));
-}
-
-/* ═══════════════════ NLS TOGGLE ═══════════════════ */
-
-function bindNlsToggle() {
-  const chk = $('cargoIsNls'), row = $('nlsCategoryRow');
-  if (!chk || !row) return;
-  const update = () => { row.style.display = chk.checked ? 'flex' : 'none'; };
-  chk.addEventListener('change', update);
-  update();
-}
-
-/* ═══════════════════ TABS ═══════════════════ */
-
-function initTabs() {
-  const panelMap = { zonePanel: 'zone', slopPanel: 'slop', routePanel: 'route' };
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      const panel = $(btn.dataset.tab);
-      if (panel) panel.classList.add('active');
-      switchPanel(panelMap[btn.dataset.tab] || 'zone');
-    });
-  });
-}
-
-/* ═══════════════════ BOOT ═══════════════════ */
-
-document.addEventListener('DOMContentLoaded', () => {
-  setTimeout(() => $('loader')?.classList.add('hidden'), 900);
-
-  const globe = new GlobeController('globe-canvas');
-  initMaps();
-  setTimeout(loadZonesOverlay, 1200);
-
-  pollHealth();
-  setInterval(pollHealth, HEALTH_POLL_MS);
-
-  renderHistory();
-  updateKpis();
-  bindNlsToggle();
-  bindLegend();
-  initTabs();
-
-  $('zoneSubmit')?.addEventListener('click', () => submitZone(globe));
-  $('slopSubmit')?.addEventListener('click', submitSlop);
-  $('routeSubmit')?.addEventListener('click', submitRoute);
-
-  $('clearHistory')?.addEventListener('click', () => {
-    localStorage.removeItem(HISTORY_KEY);
-    renderHistory();
-    updateKpis();
-    toast('History cleared', 'info');
-  });
-});
