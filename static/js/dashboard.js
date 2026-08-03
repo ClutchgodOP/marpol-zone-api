@@ -274,7 +274,12 @@ function shipIcon(status) {
 }
 
 function initMaps() {
-  sharedMap = L.map('sharedMap', { zoomControl: true, attributionControl: true }).setView(INITIAL_VIEW.center, INITIAL_VIEW.zoom);
+  // Leaflet must own its own dedicated container. Initializing it on
+  // #sharedMap (the outer wrapper) wipes out the sibling overlay elements
+  // (#mapLoader, #zoneLegend, #mapCoordsBar, #mapCrosshair) that Leaflet's
+  // DOM takeover clears from any container it binds to directly.
+  sharedMap = L.map('leafletMap', { zoomControl: true, attributionControl: true })
+    .setView(INITIAL_VIEW.center, INITIAL_VIEW.zoom);
   L.tileLayer(TILE_URL, TILE_OPTIONS).addTo(sharedMap);
 
   layerGroups.zone  = L.layerGroup().addTo(sharedMap);
@@ -286,10 +291,24 @@ function initMaps() {
     if (activePanel === 'zone'  && $('lat'))      { $('lat').value = lat;      $('lon').value = lon; }
     if (activePanel === 'slop'  && $('slopLat'))  { $('slopLat').value = lat;  $('slopLon').value = lon; }
     if (activePanel === 'route' && $('routeLat')) { $('routeLat').value = lat; $('routeLon').value = lon; }
+    if ($('mapCoordsBar')) $('mapCoordsBar').textContent = `Lat ${lat} \u00a0 Lon ${lon}`;
   });
 
-  deckOverlay = new ZonesOverlay('sharedMap');
+  sharedMap.on('mousemove', e => {
+    if (!$('mapCoordsBar')) return;
+    $('mapCoordsBar').textContent = `Lat ${e.latlng.lat.toFixed(4)} \u00a0 Lon ${e.latlng.lng.toFixed(4)}`;
+  });
+
+  // deck.gl overlay must render into the SAME container Leaflet uses,
+  // otherwise its absolutely-positioned canvas won't align with the tiles.
+  deckOverlay = new ZonesOverlay('leafletMap');
+
+  // Tiles have loaded their first frame — dismiss the loading shimmer.
+  sharedMap.whenReady(() => {
+    $('mapLoader')?.classList.add('hidden');
+  });
 }
+
 
 function loadZonesOverlay() {
   deckOverlay?.load(`${apiBase()}${ENDPOINTS.zonesGeoJson}`);
