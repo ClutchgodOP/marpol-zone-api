@@ -5,284 +5,76 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Volteo Maritime — MARPOL Compliance Dashboard</title>
 
-  <!-- Three.js via CDN (globe hero section only) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
   <script type="importmap">
   {
     "imports": {
-      "three":         "https://cdn.jsdelivr.net/npm/three@0.167.1/build/three.module.js",
+      "three": "https://cdn.jsdelivr.net/npm/three@0.167.1/build/three.module.js",
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.167.1/examples/jsm/"
     }
   }
   </script>
 
-  <!-- Leaflet (panel maps) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-  <!-- deck.gl (GeoJSON zone overlay) -->
   <script src="https://unpkg.com/deck.gl@8.9.35/dist.min.js"></script>
 
-  <!-- Dashboard animated styles -->
   <link rel="stylesheet" href="/static/css/dashboard.css" />
-
-  <style>
-    /* ── Reset & tokens ─────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
-      --bg:        #050d1a;
-      --surface:   #0b1929;
-      --border:    #1a3a5c;
-      --accent:    #00d4ff;
-      --accent2:   #0088ff;
-      --warn:      #ff6b35;
-      --safe:      #00e676;
-      --text:      #e0f0ff;
-      --text-dim:  #6a9ac4;
-      --radius:    12px;
-      --glow:      0 0 24px rgba(0, 212, 255, 0.25);
-    }
-
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Inter', system-ui, sans-serif;
-      min-height: 100vh;
-      overflow-x: hidden;
-    }
-
-    /* ── Loading screen ──────────────────────────────────────── */
-    #loader {
-      position: fixed; inset: 0;
-      background: var(--bg);
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      z-index: 9999;
-      transition: opacity 0.8s ease;
-    }
-    #loader.hidden { opacity: 0; pointer-events: none; }
-
-    .loader-ring {
-      width: 80px; height: 80px;
-      border: 3px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-    .loader-text {
-      margin-top: 20px;
-      font-size: 0.85rem;
-      letter-spacing: 0.15em;
-      color: var(--accent);
-      text-transform: uppercase;
-      animation: pulse 1.5s ease-in-out infinite;
-    }
-    @keyframes spin  { to { transform: rotate(360deg); } }
-    @keyframes pulse { 0%,100% { opacity:0.4; } 50% { opacity:1; } }
-
-    /* ── Header ─────────────────────────────────────────────── */
-    header {
-      position: sticky; top: 0; z-index: 100;
-      background: rgba(5,13,26,0.85);
-      backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--border);
-      padding: 0 2rem;
-      display: flex; align-items: center; gap: 1rem;
-      height: 60px;
-    }
-    header .logo { font-size: 1.1rem; font-weight: 700; color: var(--accent); }
-    header .badge {
-      font-size: 0.65rem; padding: 2px 8px;
-      background: rgba(0,212,255,0.1);
-      border: 1px solid var(--accent);
-      border-radius: 20px;
-      color: var(--accent);
-      letter-spacing: 0.1em;
-    }
-    header nav { margin-left: auto; display: flex; align-items: center; gap: 1.5rem; }
-    header nav a {
-      color: var(--text-dim); font-size: 0.85rem;
-      text-decoration: none; transition: color 0.2s;
-    }
-    header nav a:hover { color: var(--accent); }
-
-    /* ── Health indicator ─────────────────────────────────────── */
-    .health-indicator {
-      display: flex; align-items: center; gap: 0.4rem;
-      font-size: 0.75rem; color: var(--text-dim);
-    }
-    #healthDot {
-      width: 8px; height: 8px; border-radius: 50%;
-      background: var(--text-dim);
-      transition: background 0.3s, box-shadow 0.3s;
-    }
-
-    /* ── Hero globe canvas ──────────────────────────────────── */
-    #globe-section {
-      position: relative;
-      height: 480px;
-      overflow: hidden;
-      display: flex; align-items: center; justify-content: center;
-    }
-    #globe-canvas {
-      width: 100%; height: 100%;
-      display: block;
-    }
-    .globe-overlay {
-      position: absolute;
-      left: 5%;
-      top: 50%; transform: translateY(-50%);
-      z-index: 10;
-      max-width: 380px;
-    }
-    .globe-overlay h1 {
-      font-size: 2rem; font-weight: 800;
-      line-height: 1.2;
-      background: linear-gradient(135deg, #fff 0%, var(--accent) 100%);
-      background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      margin-bottom: 0.5rem;
-    }
-    .globe-overlay p { color: var(--text-dim); font-size: 0.9rem; line-height: 1.6; }
-
-    /* ── Main layout ─────────────────────────────────────────── */
-    main {
-      max-width: 1400px; margin: 0 auto;
-      padding: 2rem;
-    }
-
-    /* ── Card component ─────────────────────────────────────── */
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 1.5rem;
-      transition: box-shadow 0.3s ease;
-    }
-    .card:hover { box-shadow: var(--glow); }
-    .card-title {
-      font-size: 0.7rem; letter-spacing: 0.12em;
-      text-transform: uppercase; color: var(--text-dim);
-      margin-bottom: 1rem;
-    }
-
-    /* ── Panel grid: form left, map+result right ─────────────── */
-    .panel-grid {
-      display: grid;
-      grid-template-columns: 340px 1fr;
-      gap: 1.5rem;
-    }
-    .panel-map {
-      height: 320px;
-      border-radius: var(--radius);
-      overflow: hidden;
-      border: 1px solid var(--border);
-      margin-bottom: 1rem;
-      position: relative;
-    }
-
-    /* ── Input form ─────────────────────────────────────────── */
-    .form-row { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.75rem; }
-    .form-row label { font-size: 0.75rem; color: var(--text-dim); }
-    .form-row input, .form-row select {
-      background: rgba(0,212,255,0.05);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text);
-      padding: 0.5rem 0.75rem;
-      font-size: 0.85rem;
-      transition: border-color 0.2s, box-shadow 0.2s;
-      width: 100%;
-    }
-    .form-row input:focus, .form-row select:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(0,212,255,0.12);
-    }
-
-    .btn-primary {
-      width: 100%; padding: 0.7rem;
-      background: linear-gradient(135deg, var(--accent2), var(--accent));
-      border: none; border-radius: 8px;
-      color: #000; font-weight: 700; font-size: 0.875rem;
-      cursor: pointer;
-      transition: transform 0.15s, box-shadow 0.15s;
-      letter-spacing: 0.05em;
-      margin-top: 0.5rem;
-    }
-    .btn-primary:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 20px rgba(0,212,255,0.4);
-    }
-    .btn-primary:active { transform: translateY(0); }
-
-    /* ── Footer ─────────────────────────────────────────────── */
-    footer {
-      text-align: center; padding: 2rem;
-      font-size: 0.75rem; color: var(--text-dim);
-      border-top: 1px solid var(--border);
-      margin-top: 2rem;
-    }
-    footer a { color: var(--accent); text-decoration: none; }
-
-    /* ── Scroll reveal ──────────────────────────────────────── */
-    .reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.5s ease, transform 0.5s ease; }
-    .reveal.visible { opacity: 1; transform: translateY(0); }
-
-    /* ── History section ──────────────────────────────────────── */
-    .history-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 1rem;
-    }
-    .btn-ghost {
-      background: none; border: 1px solid var(--border);
-      color: var(--text-dim); font-size: 0.72rem;
-      padding: 0.35rem 0.8rem; border-radius: 6px;
-      cursor: pointer; transition: border-color 0.2s, color 0.2s;
-    }
-    .btn-ghost:hover { border-color: var(--warn); color: var(--warn); }
-
-    /* ── API base override (advanced, optional) ───────────────── */
-    .api-base-row { max-width: 1400px; margin: 0 auto; padding: 0.5rem 2rem 0; }
-    .api-base-row input { font-size: 0.7rem; opacity: 0.6; }
-
-    @media (max-width: 900px) {
-      .panel-grid { grid-template-columns: 1fr; }
-      .globe-overlay { left: 50%; transform: translate(-50%,-50%); text-align: center; }
-    }
-  </style>
 </head>
 <body>
 
-<!-- Loading screen -->
 <div id="loader">
   <div class="loader-ring"></div>
   <p class="loader-text">Initialising MARPOL Engine</p>
 </div>
 
-<!-- Header -->
+<div id="toastStack" aria-live="polite"></div>
+
 <header>
   <span class="logo">⚓ Volteo Maritime</span>
-  <span class="badge">MARPOL v3.0</span>
+  <span class="badge">MARPOL v4.0</span>
   <nav>
     <span class="health-indicator">
       <span id="healthDot"></span>
       <span id="healthLabel">Checking…</span>
     </span>
-    <a href="https://volteo-maritime-marpol-zone-api.up.railway.app/docs" target="_blank">API Docs</a>
-    <a href="https://github.com/ClutchgodOP/marpol-zone-api.git" target="_blank">GitHub</a>
-    <a href="https://www.imo.org/en/ourwork/environment/pages/special-areas-marpol.aspx" target="_blank">IMO</a>
+    <a href="https://volteo-maritime-marpol-zone-api.up.railway.app/docs" target="_blank" rel="noopener">API Docs</a>
+    <a href="https://github.com/ClutchgodOP/marpol-zone-api.git" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://www.imo.org/en/ourwork/environment/pages/special-areas-marpol.aspx" target="_blank" rel="noopener">IMO</a>
   </nav>
 </header>
 
-<!-- 3D Globe Hero -->
 <section id="globe-section">
   <canvas id="globe-canvas"></canvas>
   <div class="globe-overlay">
     <h1>MARPOL Zone Intelligence</h1>
     <p>Real-time discharge compliance across all MARPOL Annexes I–VI, powered by IMO-sourced zone geometry and MEPC 84 regulatory updates.</p>
   </div>
+  <div class="globe-scrim"></div>
 </section>
 
-<!-- Main Dashboard -->
+<div class="kpi-strip reveal">
+  <div class="kpi-card">
+    <span class="kpi-label">Checks Today</span>
+    <strong class="kpi-value" id="kpiChecks">0</strong>
+  </div>
+  <div class="kpi-card">
+    <span class="kpi-label">Compliance Rate</span>
+    <strong class="kpi-value" id="kpiCompliance">—</strong>
+  </div>
+  <div class="kpi-card">
+    <span class="kpi-label">Active Zones Tracked</span>
+    <strong class="kpi-value" id="kpiZones">—</strong>
+  </div>
+  <div class="kpi-card">
+    <span class="kpi-label">API Latency</span>
+    <strong class="kpi-value" id="kpiLatency">—</strong>
+  </div>
+</div>
+
 <main>
   <div class="card reveal">
     <div class="tabs">
@@ -291,21 +83,23 @@
       <button class="tab-btn" data-tab="routePanel">Route Check</button>
     </div>
 
-    <!-- ── Zone Panel ────────────────────────────────────────── -->
-    <div class="tab-panel active" id="zonePanel">
-      <div class="panel-grid">
-        <div>
+    <div class="workspace">
+      <div class="workspace-forms">
+
+        <div class="tab-panel active" id="zonePanel">
           <div class="form-row">
             <label>Ship ID</label>
             <input type="text" id="shipId" value="SHIP_101" placeholder="e.g. SHIP_101" />
           </div>
-          <div class="form-row">
-            <label>Latitude</label>
-            <input type="number" id="lat" value="36.0" step="0.001" min="-90" max="90" />
-          </div>
-          <div class="form-row">
-            <label>Longitude</label>
-            <input type="number" id="lon" value="14.0" step="0.001" min="-180" max="180" />
+          <div class="form-row-split">
+            <div class="form-row">
+              <label>Latitude</label>
+              <input type="number" id="lat" value="36.0" step="0.001" min="-90" max="90" />
+            </div>
+            <div class="form-row">
+              <label>Longitude</label>
+              <input type="number" id="lon" value="14.0" step="0.001" min="-180" max="180" />
+            </div>
           </div>
           <div class="form-row">
             <label>Waste Type Filter (optional)</label>
@@ -318,46 +112,45 @@
               <option value="Air Pollution (SOx/NOx ECA)">Air Pollution ECA (Annex VI)</option>
             </select>
           </div>
-          <button class="btn-primary" id="zoneSubmit">▶ Run Zone Check</button>
+          <button class="btn-primary" id="zoneSubmit"><span>Run Zone Check</span></button>
+          <div class="section-label">Result</div>
+          <div id="zoneResult"><p class="empty-state">Enter a position and run a check.</p></div>
         </div>
-        <div>
-          <div class="panel-map" id="zoneMap"></div>
-          <div id="zoneResult"></div>
-        </div>
-      </div>
-    </div>
 
-    <!-- ── Slop Panel ────────────────────────────────────────── -->
-    <div class="tab-panel" id="slopPanel">
-      <div class="panel-grid">
-        <div>
+        <div class="tab-panel" id="slopPanel">
           <div class="form-row">
             <label>Ship ID</label>
             <input type="text" id="slopShipId" value="SHIP_101" placeholder="e.g. SHIP_101" />
           </div>
-          <div class="form-row">
-            <label>Latitude</label>
-            <input type="number" id="slopLat" value="36.0" step="0.001" min="-90" max="90" />
+          <div class="form-row-split">
+            <div class="form-row">
+              <label>Latitude</label>
+              <input type="number" id="slopLat" value="36.0" step="0.001" min="-90" max="90" />
+            </div>
+            <div class="form-row">
+              <label>Longitude</label>
+              <input type="number" id="slopLon" value="14.0" step="0.001" min="-180" max="180" />
+            </div>
           </div>
-          <div class="form-row">
-            <label>Longitude</label>
-            <input type="number" id="slopLon" value="14.0" step="0.001" min="-180" max="180" />
+          <div class="form-row-split">
+            <div class="form-row">
+              <label>Speed (knots)</label>
+              <input type="number" id="shipSpeed" value="8.5" step="0.1" min="0" max="50" />
+            </div>
+            <div class="form-row">
+              <label>Oil Content (ppm)</label>
+              <input type="number" id="oilContent" value="12" step="0.1" min="0" />
+            </div>
           </div>
-          <div class="form-row">
-            <label>Speed (knots)</label>
-            <input type="number" id="shipSpeed" value="8.5" step="0.1" min="0" max="50" />
-          </div>
-          <div class="form-row">
-            <label>Oil Content (ppm)</label>
-            <input type="number" id="oilContent" value="12" step="0.1" min="0" />
-          </div>
-          <div class="form-row">
-            <label>Discharge Rate (L/NM)</label>
-            <input type="number" id="dischargeRate" value="25" step="0.1" min="0" />
-          </div>
-          <div class="form-row">
-            <label>Tank Capacity (m³)</label>
-            <input type="number" id="tankCapacity" value="5000" step="1" min="0" />
+          <div class="form-row-split">
+            <div class="form-row">
+              <label>Discharge Rate (L/NM)</label>
+              <input type="number" id="dischargeRate" value="25" step="0.1" min="0" />
+            </div>
+            <div class="form-row">
+              <label>Tank Capacity (m³)</label>
+              <input type="number" id="tankCapacity" value="5000" step="1" min="0" />
+            </div>
           </div>
           <div class="form-row checkbox-row">
             <input type="checkbox" id="odmcsOp" checked />
@@ -365,7 +158,7 @@
           </div>
           <div class="form-row checkbox-row">
             <input type="checkbox" id="cargoIsNls" />
-            <label for="cargoIsNls" style="margin:0">Cargo is NLS (Annex II)<span class="nls-badge">Annex II</span></label>
+            <label for="cargoIsNls" style="margin:0">Cargo is NLS <span class="nls-badge">Annex II</span></label>
           </div>
           <div class="form-row" id="nlsCategoryRow" style="display:none">
             <label>NLS Category</label>
@@ -376,94 +169,104 @@
               <option value="OS">Other Substances (OS)</option>
             </select>
           </div>
-          <button class="btn-primary" id="slopSubmit">▶ Run Slop Check</button>
+          <button class="btn-primary" id="slopSubmit"><span>Run Slop Check</span></button>
+          <div class="section-label">Result</div>
+          <div id="slopResult"><p class="empty-state">Enter discharge parameters and run a check.</p></div>
         </div>
-        <div>
-          <div class="panel-map" id="slopMap"></div>
-          <div id="slopResult"></div>
-        </div>
-      </div>
-    </div>
 
-    <!-- ── Route Panel ───────────────────────────────────────── -->
-    <div class="tab-panel" id="routePanel">
-      <div class="panel-grid">
-        <div>
+        <div class="tab-panel" id="routePanel">
           <div class="form-row">
             <label>Ship ID</label>
             <input type="text" id="routeShipId" value="SHIP_101" placeholder="e.g. SHIP_101" />
           </div>
-          <div class="form-row">
-            <label>Current Latitude</label>
-            <input type="number" id="routeLat" value="36.0" step="0.001" min="-90" max="90" />
-          </div>
-          <div class="form-row">
-            <label>Current Longitude</label>
-            <input type="number" id="routeLon" value="14.0" step="0.001" min="-180" max="180" />
+          <div class="form-row-split">
+            <div class="form-row">
+              <label>Current Latitude</label>
+              <input type="number" id="routeLat" value="36.0" step="0.001" min="-90" max="90" />
+            </div>
+            <div class="form-row">
+              <label>Current Longitude</label>
+              <input type="number" id="routeLon" value="14.0" step="0.001" min="-180" max="180" />
+            </div>
           </div>
           <div class="form-row">
             <label>Origin Port (optional)</label>
             <input type="text" id="originPort" placeholder="e.g. Valletta" />
           </div>
-          <div class="form-row">
-            <label>Origin Latitude</label>
-            <input type="number" id="originLat" step="0.001" min="-90" max="90" />
-          </div>
-          <div class="form-row">
-            <label>Origin Longitude</label>
-            <input type="number" id="originLon" step="0.001" min="-180" max="180" />
+          <div class="form-row-split">
+            <div class="form-row">
+              <label>Origin Latitude</label>
+              <input type="number" id="originLat" step="0.001" min="-90" max="90" />
+            </div>
+            <div class="form-row">
+              <label>Origin Longitude</label>
+              <input type="number" id="originLon" step="0.001" min="-180" max="180" />
+            </div>
           </div>
           <div class="form-row">
             <label>Destination Port (optional)</label>
             <input type="text" id="destPort" placeholder="e.g. Piraeus" />
           </div>
-          <div class="form-row">
-            <label>Destination Latitude</label>
-            <input type="number" id="destLat" step="0.001" min="-90" max="90" />
-          </div>
-          <div class="form-row">
-            <label>Destination Longitude</label>
-            <input type="number" id="destLon" step="0.001" min="-180" max="180" />
+          <div class="form-row-split">
+            <div class="form-row">
+              <label>Destination Latitude</label>
+              <input type="number" id="destLat" step="0.001" min="-90" max="90" />
+            </div>
+            <div class="form-row">
+              <label>Destination Longitude</label>
+              <input type="number" id="destLon" step="0.001" min="-180" max="180" />
+            </div>
           </div>
           <div class="form-row">
             <label>Corridor Width (NM)</label>
             <input type="number" id="corridorWidth" value="25" step="1" min="1" />
           </div>
-          <button class="btn-primary" id="routeSubmit">▶ Run Route Check</button>
+          <button class="btn-primary" id="routeSubmit"><span>Run Route Check</span></button>
+          <div class="section-label">Result</div>
+          <div id="routeResult"><p class="empty-state">Set current position and route endpoints, then run a check.</p></div>
         </div>
-        <div>
-          <div class="panel-map" id="routeMap"></div>
-          <div id="routeResult"></div>
+
+      </div>
+
+      <div class="workspace-map">
+        <div class="panel-map" id="sharedMap">
+          <div id="zoneLegend" class="glass-panel legend-panel">
+            <div class="legend-title">MARPOL Annexes</div>
+            <label><input type="checkbox" data-annex="I" checked><span class="dot" style="background:#ff6b35"></span>Annex I — Oil</label>
+            <label><input type="checkbox" data-annex="II" checked><span class="dot" style="background:#ffc800"></span>Annex II — NLS</label>
+            <label><input type="checkbox" data-annex="IV" checked><span class="dot" style="background:#00c8ff"></span>Annex IV — Sewage</label>
+            <label><input type="checkbox" data-annex="V" checked><span class="dot" style="background:#96ff64"></span>Annex V — Garbage</label>
+            <label><input type="checkbox" data-annex="VI" checked><span class="dot" style="background:#c864ff"></span>Annex VI — Air (ECA)</label>
+          </div>
+          <div class="map-crosshair" id="mapCrosshair"></div>
         </div>
+        <p class="map-hint">Click anywhere on the map to set coordinates for the active panel.</p>
       </div>
     </div>
   </div>
 
-  <!-- History -->
   <div class="card reveal" style="margin-top:1.5rem">
     <div class="history-header">
       <p class="card-title" style="margin:0">Check History</p>
       <button class="btn-ghost" id="clearHistory">Clear</button>
     </div>
-    <div id="historyList"></div>
+    <div id="historyList"><p class="empty-state">No checks yet. Run a zone, slop, or route check above.</p></div>
+  </div>
+
+  <div class="api-base-row">
+    <input type="text" id="apiBase" placeholder="Override API base URL (advanced, optional)" />
   </div>
 </main>
 
 <footer>
-  Volteo Maritime MARPOL Compliance API v3.0 &mdash;
+  Volteo Maritime MARPOL Compliance API v4.0 &mdash;
   Zone data sourced from IMO resolutions incl. MEPC.407(84) &mdash;
-  <a href="https://volteo-maritime-marpol-zone-api.up.railway.app/docs"
-   target="_blank"
-   rel="noopener noreferrer">
-  API Docs
-</a> &middot;
-  <a href="https://www.imo.org" target="_blank">IMO.org</a>
+  <a href="https://volteo-maritime-marpol-zone-api.up.railway.app/docs" target="_blank" rel="noopener">API Docs</a> &middot;
+  <a href="https://www.imo.org" target="_blank" rel="noopener">IMO.org</a>
 </footer>
 
-<!-- ── Dashboard logic (ES module: globe.js + zones-overlay.js + dashboard.js) ── -->
 <script type="module" src="/static/js/dashboard.js"></script>
 
-<!-- ── Scroll reveal (lightweight, non-module) ─────────────────────── -->
 <script>
   const revealEls = document.querySelectorAll('.reveal');
   const io = new IntersectionObserver((entries) => {
