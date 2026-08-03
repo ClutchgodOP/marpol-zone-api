@@ -120,7 +120,11 @@ header nav a:hover       { color: var(--accent); }
 .globe-overlay h1  {
   font-size: 2.15rem; font-weight: 800; line-height: 1.2;
   background: linear-gradient(135deg, #fff 0%, var(--accent) 100%);
-  background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  /* FIX 1: -webkit- prefix must come first, then unprefixed, then fill-color */
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
   margin-bottom: 0.6rem;
 }
 .globe-overlay p   { color: var(--text-dim); font-size: 0.92rem; line-height: 1.65; }
@@ -267,12 +271,11 @@ header nav a:hover       { color: var(--accent); }
 .map-toolbar-title     { font-size: 0.88rem; font-weight: 600; color: var(--text); }
 .map-toolbar-actions   { display: flex; gap: 0.5rem; }
 
-/* CRITICAL MAP FIX — Leaflet container must have explicit height and never be display:none on init */
-#map {
+/* FIX 2: was #map — corrected to #leafletMap to match HTML id="leafletMap" */
+#leafletMap {
   height: 560px;
   width: 100%;
   background: var(--bg2);
-  /* Never set display:none here — use tab panel visibility instead */
 }
 
 /* Override Leaflet default controls to match dark theme */
@@ -378,5 +381,6 @@ header nav a:hover       { color: var(--accent); }
   .tab-btn            { font-size: 0.78rem; padding: 0.55rem 0.75rem; }
   header              { padding: 0 1rem; gap: 0.6rem; }
   header nav          { display: none; }
-  #map                { height: 380px; }
+  /* FIX 2 (continued): was #map — corrected to match HTML */
+  #leafletMap         { height: 380px; }
 }

@@ -1,737 +1,687 @@
 /**
- * dashboard.js
- * Main application controller for the Volteo Maritime MARPOL Compliance Dashboard.
+ * dashboard.js — Volteo Maritime MARPOL Compliance Dashboard v5.0
+ * Classic script (no ES modules). Depends on: window.L (Leaflet),
+ * window.GlobeController (globe.js), window.ZonesOverlay (zones-overlay.js).
  *
- * Boot sequence (all steps wrapped in try/catch — no single failure blocks load):
- *   1. DOMContentLoaded fires
- *   2. Loader shown (already visible in HTML)
- *   3. Tab system initialized
- *   4. Globe initialized (graceful degrade)
- *   5. Leaflet map initialized (graceful degrade)
- *   6. Zone overlay loaded (graceful degrade)
- *   7. API health poll started
- *   8. Event listeners attached
- *   9. History rendered
- *  10. Loader hidden  ← always reaches this step
+ * BootManager guarantees the loader is ALWAYS removed — no single subsystem
+ * can block the dashboard from becoming interactive.
  */
+(function (global) {
+  'use strict';
 
-'use strict';
+  /* ═══════════════════ CONFIG ═══════════════════ */
 
-import { GlobeController } from './globe.js';
-import { ZonesOverlay     } from './zones-overlay.js';
+  var RAILWAY_API    = 'https://volteo-maritime-marpol-zone-api.up.railway.app';
+  var DEMO_API_KEY   = 'volteo-demo-key-2026';
+  var HEALTH_POLL_MS = 15000;
+  var HISTORY_LIMIT  = 30;
+  var HISTORY_KEY    = 'marpol_history_v4';
+  var TILE_URL       = 'https://{s}.basemaps.cartocdn.com/dark_matter/{z}/{x}/{y}{r}.png';
+  var TILE_OPTIONS   = { maxZoom: 19, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO' };
+  var INITIAL_VIEW   = { center: [20, 0], zoom: 2 };
+  var COLORS         = { safe: '#00e676', warn: '#ff6b35', primary: '#00d4ff' };
 
-// ─── Configuration ────────────────────────────────────────────────────────────
-
-const API_BASE      = 'https://volteo-maritime-marpol-zone-api.up.railway.app';
-const HEALTH_POLL_MS = 30_000;
-const API_TIMEOUT_MS = 15_000;
-const LOADER_MIN_MS  = 900;    // minimum display time so loader doesn't flash
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Typed getElementById — returns null without throwing if missing. */
-const $  = (id) => document.getElementById(id);
-
-/** Read a numeric input value; returns NaN if invalid or missing. */
-const num = (id) => {
-  const el = $(id);
-  if (!el) return NaN;
-  const v = parseFloat(el.value);
-  return isNaN(v) ? NaN : v;
-};
-
-/** Read a string input/select value; returns '' if missing. */
-const str = (id) => $(id)?.value?.trim() ?? '';
-
-/** Append a class; no-op if element missing. */
-const addClass    = (id, cls) => $(id)?.classList.add(cls);
-const removeClass = (id, cls) => $(id)?.classList.remove(cls);
-
-/** Fetch with AbortController timeout. */
-async function fetchWithTimeout(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    return res;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// ─── State ────────────────────────────────────────────────────────────────────
-
-let sharedMap    = null;   // L.Map instance
-let globe        = null;   // GlobeController instance
-let zonesOverlay = null;   // ZonesOverlay instance
-let sessionStats = { checks: 0, violations: 0 };
-let queryHistory = [];
-
-// ─── Boot ────────────────────────────────────────────────────────────────────
-
-document.addEventListener('DOMContentLoaded', async () => {
-  const bootStart = performance.now();
-  console.info('[Boot] DOMContentLoaded — starting initialization.');
-
-  // ── 1. Tabs ────────────────────────────────────────────────────────────────
-  try {
-    initTabs();
-    console.info('[Boot] Tabs ready.');
-  } catch (err) {
-    console.error('[Boot] Tab init failed — continuing.', err);
+  function apiBase() {
+    var origin  = window.location.origin;
+    var isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+    return (isLocal || origin === RAILWAY_API) ? origin : RAILWAY_API;
   }
 
-  // ── 2. Globe ───────────────────────────────────────────────────────────────
-  try {
-    if ($('globe-canvas')) {
-      globe = new GlobeController('globe-canvas');
+  var ENDPOINTS = {
+    health:       '/health',
+    authToken:    '/auth/token',
+    checkZone:    '/api/v1/check-zone',
+    checkSlop:    '/api/v1/check-slop',
+    checkRoute:   '/api/v1/check-route',
+    zonesGeoJson: '/api/v1/zones/geojson',
+  };
+
+  /* ═══════════════════ DOM HELPERS ═══════════════════ */
+
+  function $(id) { return document.getElementById(id); }
+  function escHtml(v) {
+    var n = document.createElement('div');
+    n.textContent = String(v == null ? '' : v);
+    return n.innerHTML;
+  }
+  function fmt(v, d) {
+    d = (d == null) ? 2 : d;
+    return (v == null || isNaN(+v)) ? '—' : (+v).toFixed(d);
+  }
+  function safeArr(v) { return Array.isArray(v) ? v : []; }
+  function numFrom(id) {
+    var el = $(id);
+    if (!el) return null;
+    var p = parseFloat(el.value);
+    return isNaN(p) ? null : p;
+  }
+  function textFrom(id, fb) {
+    var el = $(id);
+    var v = el && el.value && el.value.trim();
+    return v || (fb || '');
+  }
+  function boolFrom(id) {
+    var el = $(id);
+    return !!(el && el.checked);
+  }
+
+  /* ═══════════════════ TOASTS ═══════════════════ */
+
+  function toast(message, type) {
+    type = type || 'info';
+    var stack = $('toastStack');
+    if (!stack) return;
+    var el = document.createElement('div');
+    el.className = 'toast toast-' + type;
+    el.innerHTML = '<span>' + escHtml(message) + '</span>';
+    stack.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('show'); });
+    setTimeout(function () {
+      el.classList.remove('show');
+      setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+    }, 4200);
+  }
+
+  /* ═══════════════════ AUTH ═══════════════════ */
+
+  var _authToken  = null;
+  var _authExpiry = 0;
+  var _authInflight = null;
+
+  function fetchToken() {
+    var url = apiBase() + ENDPOINTS.authToken + '?api_key=' + DEMO_API_KEY;
+    return fetch(url, { method: 'POST' })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Auth failed: HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        _authToken  = data.access_token;
+        _authExpiry = Date.now() + ((data.expires_in || 900) - 30) * 1000;
+        return _authToken;
+      });
+  }
+
+  function getToken() {
+    if (_authToken && Date.now() < _authExpiry) return Promise.resolve(_authToken);
+    if (!_authInflight) {
+      _authInflight = fetchToken().finally(function () { _authInflight = null; });
     }
-    console.info('[Boot] Globe ready.');
-  } catch (err) {
-    console.error('[Boot] Globe init failed — dashboard continues.', err);
-    globe = null;
+    return _authInflight;
   }
 
-  // ── 3. Leaflet map ────────────────────────────────────────────────────────
-  try {
-    initMap();
-    console.info('[Boot] Map ready.');
-  } catch (err) {
-    console.error('[Boot] Map init failed — dashboard continues.', err);
-    sharedMap = null;
+  function invalidateToken() { _authToken = null; _authExpiry = 0; }
+
+  /* ═══════════════════ API LAYER ═══════════════════ */
+
+  var latencySamples = [];
+
+  function recordLatency(ms) {
+    latencySamples.push(ms);
+    if (latencySamples.length > 10) latencySamples.shift();
+    var avg = latencySamples.reduce(function (a, b) { return a + b; }, 0) / latencySamples.length;
+    var el = $('kpiLatency');
+    if (el) el.textContent = Math.round(avg) + ' ms';
   }
 
-  // ── 4. Zone overlay ───────────────────────────────────────────────────────
-  try {
-    if (sharedMap) {
-      zonesOverlay = new ZonesOverlay(sharedMap, `${API_BASE}/zones/geojson`);
-      zonesOverlay.load(); // non-blocking — fire and forget
+  function request(path, opts, _retry) {
+    opts = opts || {};
+    return getToken().then(function (token) {
+      var url     = apiBase() + path;
+      var headers = Object.assign({ 'Authorization': 'Bearer ' + token }, opts.headers || {});
+      var t0      = performance.now();
+      return fetch(url, Object.assign({}, opts, { headers: headers }))
+        .then(function (res) {
+          recordLatency(performance.now() - t0);
+          if (res.status === 401 && !_retry) {
+            invalidateToken();
+            return request(path, opts, true);
+          }
+          var ct = res.headers.get('content-type') || '';
+          var bodyP = ct.indexOf('json') !== -1 ? res.json().catch(function () { return null; }) : Promise.resolve(null);
+          return bodyP.then(function (body) {
+            if (res.ok) return body;
+            var msg = (body && body.detail) ? body.detail : ('HTTP ' + res.status);
+            throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+          });
+        })
+        .catch(function (err) {
+          if (err && err.message && err.message.indexOf('HTTP') !== 0) {
+            throw new Error('Network error: ' + err.message);
+          }
+          throw err;
+        });
+    });
+  }
+
+  function postJson(path, payload) {
+    return request(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /* ═══════════════════ HEALTH ═══════════════════ */
+
+  function pollHealth() {
+    var dot   = $('healthDot');
+    var label = $('healthLabel');
+    if (!dot || !label) return;
+    request(ENDPOINTS.health)
+      .then(function (data) {
+        var ok = data && (data.status === 'ok' || data.status === 'healthy');
+        dot.style.background = ok ? COLORS.safe : COLORS.warn;
+        dot.style.boxShadow  = ok ? ('0 0 8px ' + COLORS.safe) : ('0 0 8px ' + COLORS.warn);
+        label.textContent    = ok ? 'API Online' : 'API Degraded';
+        label.style.color    = ok ? COLORS.safe : COLORS.warn;
+      })
+      .catch(function () {
+        dot.style.background = COLORS.warn;
+        dot.style.boxShadow  = '0 0 8px ' + COLORS.warn;
+        label.textContent    = 'API Offline';
+        label.style.color    = COLORS.warn;
+      });
+  }
+
+  /* ═══════════════════ KPIs ═══════════════════ */
+
+  function updateKpis() {
+    var list      = historyLoad();
+    var total     = list.length;
+    var safeCount = list.filter(function (h) { return h.status === 'SAFE'; }).length;
+    if ($('kpiChecks'))     $('kpiChecks').textContent     = String(total);
+    if ($('kpiCompliance')) $('kpiCompliance').textContent = total ? (Math.round((safeCount / total) * 100) + '%') : '—';
+  }
+
+  /* ═══════════════════ VIEW RENDERERS ═══════════════════ */
+
+  function statusBadge(status) {
+    var safe = (status === 'SAFE');
+    return '<span class="verdict-banner ' + (safe ? 'verdict-safe' : 'verdict-warn') + '">' +
+      (safe ? '✓ SAFE TO DISCHARGE' : '✗ RESTRICTED') + '</span>';
+  }
+
+  function ruleRow(rule) {
+    var pass = rule.passed;
+    return '<div class="result-row ' + (pass ? '' : 'verdict-warn') + '" style="border-left:3px solid ' + (pass ? COLORS.safe : COLORS.warn) + ';padding-left:0.75rem;margin-bottom:0.5rem;border-radius:4px;">' +
+      '<div class="result-label">' + escHtml(rule.rule_name) + '</div>' +
+      '<div class="result-value">' + (pass ? '✓ Pass' : '✗ Fail') + ' — Got: <strong>' + escHtml(rule.actual_value) + '</strong> / Req: <strong>' + escHtml(rule.required_value) + '</strong></div>' +
+      (rule.note ? '<div style="font-size:0.75rem;color:var(--text-dim);margin-top:0.2rem;">' + escHtml(rule.note) + '</div>' : '') +
+      '</div>';
+  }
+
+  function zonesTable(zones) {
+    if (!zones.length) return '<p class="empty-state" style="padding:1rem 0;">No active MARPOL zones at this position.</p>';
+    return '<table class="data-table" style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-top:0.5rem;">' +
+      '<thead><tr style="border-bottom:1px solid var(--border);color:var(--text-dim);">' +
+      '<th style="text-align:left;padding:0.4rem 0.5rem;">Zone</th>' +
+      '<th style="text-align:left;padding:0.4rem 0.5rem;">Annex</th>' +
+      '<th style="text-align:left;padding:0.4rem 0.5rem;">Waste Type</th>' +
+      '<th style="text-align:left;padding:0.4rem 0.5rem;">Restriction</th>' +
+      '</tr></thead><tbody>' +
+      zones.map(function (z) {
+        return '<tr style="border-bottom:1px solid var(--border-soft);">' +
+          '<td style="padding:0.4rem 0.5rem;">' + escHtml(z.zone_name) + '</td>' +
+          '<td style="padding:0.4rem 0.5rem;">' + escHtml(z.annex) + '</td>' +
+          '<td style="padding:0.4rem 0.5rem;">' + escHtml(z.waste_type) + '</td>' +
+          '<td style="padding:0.4rem 0.5rem;">' + escHtml(z.restriction) + '</td>' +
+          '</tr>';
+      }).join('') +
+      '</tbody></table>';
+  }
+
+  function disposalList(items) {
+    if (!items || !items.length) return '';
+    return items.map(function (item) {
+      return '<div style="display:flex;gap:0.6rem;align-items:flex-start;padding:0.5rem 0;border-bottom:1px solid var(--border-soft);">' +
+        '<span style="color:' + (item.allowed ? COLORS.safe : COLORS.warn) + ';font-size:1.1rem;">' + (item.allowed ? '✓' : '✗') + '</span>' +
+        '<div><strong style="font-size:0.85rem;">' + escHtml(item.label) + '</strong>' +
+        '<p style="font-size:0.78rem;color:var(--text-dim);margin-top:0.2rem;">' + escHtml(item.reason) + '</p></div></div>';
+    }).join('');
+  }
+
+  function skeleton() {
+    return '<div class="skeleton" style="height:1.2rem;margin-bottom:0.75rem;"></div>' +
+      '<div class="skeleton" style="height:1.2rem;width:70%;margin-bottom:0.75rem;"></div>' +
+      '<div class="skeleton" style="height:1.2rem;margin-bottom:0.75rem;"></div>';
+  }
+
+  /* ═══════════════════ MAP STATE ═══════════════════ */
+
+  var sharedMap    = null;
+  var deckOverlay  = null;
+  var layerGroups  = { zone: null, slop: null, route: null };
+  var markers      = { zone: null, slop: null, route: null };
+  var routePolyline = null;
+  var activePanel  = 'zone';
+
+  function shipIcon(status) {
+    var color = (status === 'SAFE') ? COLORS.safe : COLORS.warn;
+    return L.divIcon({
+      className: '',
+      html: '<div style="width:20px;height:20px;border-radius:50%;background:' + color + ';border:3px solid white;box-shadow:0 0 12px ' + color + ';"></div>',
+      iconSize:   [20, 20],
+      iconAnchor: [10, 10],
+    });
+  }
+
+  function initMaps() {
+    if (typeof L === 'undefined') {
+      console.warn('[Dashboard] Leaflet not available — map disabled.');
+      return;
     }
-  } catch (err) {
-    console.error('[Boot] Zone overlay failed — continuing.', err);
-    zonesOverlay = null;
+    var mapEl = $('leafletMap');
+    if (!mapEl) {
+      console.warn('[Dashboard] #leafletMap element not found — map disabled.');
+      return;
+    }
+    sharedMap = L.map('leafletMap', { zoomControl: true, attributionControl: true })
+      .setView(INITIAL_VIEW.center, INITIAL_VIEW.zoom);
+    L.tileLayer(TILE_URL, TILE_OPTIONS).addTo(sharedMap);
+
+    layerGroups.zone  = L.layerGroup().addTo(sharedMap);
+    layerGroups.slop  = L.layerGroup();
+    layerGroups.route = L.layerGroup();
+
+    sharedMap.on('click', function (e) {
+      var lat = e.latlng.lat.toFixed(4), lon = e.latlng.lng.toFixed(4);
+      if (activePanel === 'zone'  && $('lat'))     { $('lat').value = lat;     $('lon').value = lon; }
+      if (activePanel === 'slop'  && $('slopLat')) { $('slopLat').value = lat; $('slopLon').value = lon; }
+      if (activePanel === 'route' && $('routeLat')){ $('routeLat').value = lat; $('routeLon').value = lon; }
+    });
+
+    if (typeof ZonesOverlay !== 'undefined') {
+      try {
+        deckOverlay = new ZonesOverlay('leafletMap');
+      } catch (err) {
+        console.warn('[Dashboard] ZonesOverlay init failed:', err);
+      }
+    }
   }
 
-  // ── 5. API health ─────────────────────────────────────────────────────────
-  try {
-    pollHealth();
-  } catch (err) {
-    console.error('[Boot] Health poll failed — continuing.', err);
-    setHealthStatus('offline');
+  function loadZonesOverlay() {
+    if (deckOverlay) {
+      try {
+        deckOverlay.load(apiBase() + ENDPOINTS.zonesGeoJson);
+      } catch (err) {
+        console.warn('[Dashboard] loadZonesOverlay failed:', err);
+      }
+    }
   }
 
-  // ── 6. Event listeners ────────────────────────────────────────────────────
-  try {
-    attachEventListeners();
-    console.info('[Boot] Event listeners attached.');
-  } catch (err) {
-    console.error('[Boot] Event listener setup failed — continuing.', err);
+  function switchPanel(panelKey) {
+    if (!sharedMap) return;
+    Object.keys(layerGroups).forEach(function (key) {
+      var group = layerGroups[key];
+      if (!group) return;
+      if (key === panelKey) sharedMap.addLayer(group);
+      else sharedMap.removeLayer(group);
+    });
+    activePanel = panelKey;
+    setTimeout(function () { if (sharedMap) sharedMap.invalidateSize(); }, 60);
   }
 
-  // ── 7. History ────────────────────────────────────────────────────────────
-  try {
-    loadHistory();
+  function placeMarker(group, lat, lon, status, prevKey) {
+    if (!sharedMap || !group) return null;
+    if (markers[prevKey]) {
+      try { group.removeLayer(markers[prevKey]); } catch (e) {}
+    }
+    var marker = L.marker([lat, lon], { icon: shipIcon(status) }).addTo(group)
+      .bindPopup('<strong>' + (status === 'SAFE' ? '✓ SAFE' : '✗ RESTRICTED') + '</strong><br>' +
+        fmt(lat, 4) + '°, ' + fmt(lon, 4) + '°');
+    markers[prevKey] = marker;
+    sharedMap.setView([lat, lon], Math.max(sharedMap.getZoom(), 5), { animate: true });
+    return marker;
+  }
+
+  /* ═══════════════════ HISTORY ═══════════════════ */
+
+  function historyLoad() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch (e) { return []; }
+  }
+
+  function historyAdd(entry) {
+    var list = [Object.assign({}, entry, {
+      time: new Date().toLocaleTimeString(),
+      timestamp: Date.now(),
+    })].concat(historyLoad()).slice(0, HISTORY_LIMIT);
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); } catch (e) {}
     renderHistory();
-  } catch (err) {
-    console.error('[Boot] History init failed — continuing.', err);
+    updateKpis();
   }
 
-  // ── 8. Hide loader — ALWAYS runs ─────────────────────────────────────────
-  const elapsed  = performance.now() - bootStart;
-  const delay    = Math.max(0, LOADER_MIN_MS - elapsed);
-
-  setTimeout(() => {
-    const loader = $('loader');
-    if (loader) {
-      loader.classList.add('hidden');
-      // Remove from DOM after transition so it can't block interactions
-      loader.addEventListener('transitionend', () => loader.remove(), { once: true });
-      // Safety net: remove after 1.5 s even if transition never fires
-      setTimeout(() => loader?.remove(), 1500);
+  function renderHistory() {
+    var el = $('historyList');
+    if (!el) return;
+    var list = historyLoad();
+    if (!list.length) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div>' +
+        '<p>No checks yet. Run a zone, slop, or route check above.</p></div>';
+      return;
     }
-    console.info(`[Boot] Dashboard ready in ${(performance.now() - bootStart).toFixed(0)} ms.`);
-  }, delay);
-});
+    el.innerHTML = list.map(function (h, i) {
+      var safe = h.status === 'SAFE';
+      return '<div class="history-item" data-idx="' + i + '" style="cursor:pointer;display:flex;flex-direction:column;gap:0.25rem;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<span style="font-size:0.8rem;font-weight:600;color:var(--text);">' + escHtml(h.type) + '</span>' +
+        '<span style="font-size:0.7rem;color:var(--text-dim);">' + escHtml(h.time) + '</span></div>' +
+        '<span style="font-size:0.72rem;padding:2px 8px;border-radius:12px;align-self:flex-start;font-weight:600;' +
+        'background:' + (safe ? 'rgba(0,230,118,0.12)' : 'rgba(255,107,53,0.12)') + ';' +
+        'color:' + (safe ? COLORS.safe : COLORS.warn) + ';border:1px solid ' + (safe ? COLORS.safe : COLORS.warn) + ';">' +
+        (safe ? '✓ SAFE' : '✗ RESTRICTED') + '</span>' +
+        '<span style="font-size:0.75rem;color:var(--text-dim);font-family:var(--font-mono);">' +
+        fmt(h.lat, 4) + '°, ' + fmt(h.lon, 4) + '°</span>' +
+        '<span style="font-size:0.78rem;color:var(--text-dim);">' + escHtml(h.summary || '') + '</span>' +
+        '</div>';
+    }).join('');
 
-// ─── Tab System ───────────────────────────────────────────────────────────────
-
-/**
- * Map each tab button's data-tab value → the corresponding panel element id.
- * Adjust these if HTML ids change.
- */
-const TAB_PANEL_MAP = {
-  zone    : 'panel-zone',
-  slop    : 'panel-slop',
-  route   : 'panel-route',
-  map     : 'panel-map',
-  history : 'panel-history',
-};
-
-function initTabs() {
-  const buttons = document.querySelectorAll('[data-tab]');
-  if (!buttons.length) {
-    console.warn('[Tabs] No tab buttons found.');
-    return;
-  }
-
-  buttons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tab = btn.dataset.tab;
-      switchTab(tab, buttons);
+    var items = el.querySelectorAll('.history-item');
+    items.forEach(function (item) {
+      item.addEventListener('click', function () {
+        var h = list[+item.dataset.idx];
+        if (h && sharedMap) sharedMap.setView([h.lat, h.lon], 6, { animate: true });
+      });
     });
-  });
-
-  // Activate first tab
-  const firstBtn = buttons[0];
-  if (firstBtn) switchTab(firstBtn.dataset.tab, buttons);
-}
-
-function switchTab(tab, buttons) {
-  // Deactivate all buttons
-  buttons.forEach(b => b.classList.remove('active'));
-
-  // Activate clicked button
-  const activeBtn = document.querySelector(`[data-tab="${tab}"]`);
-  if (activeBtn) activeBtn.classList.add('active');
-
-  // Hide all panels
-  Object.values(TAB_PANEL_MAP).forEach(panelId => {
-    addClass(panelId, 'hidden');
-  });
-
-  // Show target panel
-  const panelId = TAB_PANEL_MAP[tab];
-  if (panelId) {
-    removeClass(panelId, 'hidden');
   }
 
-  // Trigger map resize when map tab is activated
-  if (tab === 'map' && sharedMap) {
-    setTimeout(() => {
-      try { sharedMap.invalidateSize(); } catch (_) {}
-    }, 50);
+  /* ═══════════════════ ZONE PANEL ═══════════════════ */
+
+  var zoneState = { loading: false, data: null, error: null };
+
+  function renderZone() {
+    var out = $('zoneResult');
+    if (!out) return;
+    if (zoneState.loading) { out.innerHTML = skeleton(); return; }
+    if (zoneState.error)   { out.innerHTML = '<div class="verdict-banner verdict-warn">⚠ ' + escHtml(zoneState.error) + '</div>'; return; }
+    if (!zoneState.data)   { out.innerHTML = '<p class="empty-state">Enter a position and run a check.</p>'; return; }
+    var d = zoneState.data;
+    out.innerHTML =
+      statusBadge(d.zone_status) +
+      '<p style="margin:0.75rem 0;font-size:0.88rem;color:var(--text);">' + escHtml(d.summary) + '</p>' +
+      '<div class="result-row"><span class="result-label">Distance to nearest land</span>' +
+      '<span class="result-value mono">' + fmt(d.distance_to_nearest_land_nm) + ' NM</span></div>' +
+      '<div style="margin-top:1rem;"><div class="result-label" style="margin-bottom:0.5rem;">RULES CHECKLIST</div>' +
+      (safeArr(d.rules_checklist).map(ruleRow).join('') || '<p class="empty-state">No rules evaluated.</p>') + '</div>' +
+      '<div style="margin-top:1rem;"><div class="result-label" style="margin-bottom:0.5rem;">ACTIVE ZONES</div>' +
+      zonesTable(safeArr(d.active_zones)) + '</div>' +
+      (safeArr(d.disposal_assessment).length ? '<div style="margin-top:1rem;"><div class="result-label" style="margin-bottom:0.5rem;">DISPOSAL ASSESSMENT</div>' + disposalList(safeArr(d.disposal_assessment)) + '</div>' : '');
   }
-}
 
-// ─── Leaflet Map ──────────────────────────────────────────────────────────────
+  function submitZone(globe) {
+    var lat = numFrom('lat'), lon = numFrom('lon');
+    if (lat == null || lon == null) { toast('Please enter valid latitude and longitude.', 'warn'); return; }
 
-function initMap() {
-  // HTML uses id="map"
-  const container = $('map');
-  if (!container) throw new Error('Map container #map not found in DOM.');
-  if (!window.L)  throw new Error('Leaflet not loaded.');
+    zoneState.loading = true; zoneState.error = null; zoneState.data = null;
+    renderZone();
 
-  sharedMap = L.map('map', {
-    center        : [20, 0],
-    zoom          : 2,
-    zoomControl   : true,
-    attributionControl: false,
-  });
+    postJson(ENDPOINTS.checkZone, {
+      ship_id:           textFrom('shipId', 'SHIP_001'),
+      latitude:          lat,
+      longitude:         lon,
+      waste_type_filter: textFrom('wasteFilter') || null,
+    })
+    .then(function (data) {
+      zoneState.loading = false; zoneState.data = data; zoneState.error = null;
+      renderZone();
+      if (globe) globe.setPin(lat, lon, data.zone_status);
+      if (deckOverlay) try { deckOverlay.setShipPosition(lat, lon, data.zone_status); } catch (e) {}
+      placeMarker(layerGroups.zone, lat, lon, data.zone_status, 'zone');
+      historyAdd({ type: 'Zone Check', lat: lat, lon: lon, status: data.zone_status, summary: data.summary });
+      toast('Zone check complete: ' + data.zone_status, data.zone_status === 'SAFE' ? 'success' : 'warn');
+    })
+    .catch(function (e) {
+      zoneState.loading = false; zoneState.data = null; zoneState.error = e.message;
+      renderZone();
+      toast(e.message, 'error');
+    });
+  }
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom     : 18,
-    attribution : '© OpenStreetMap © CARTO',
-  }).addTo(sharedMap);
+  /* ═══════════════════ SLOP PANEL ═══════════════════ */
 
-  sharedMap.whenReady(() => {
-    sharedMap.invalidateSize();
-    console.info('[Map] Leaflet ready.');
-  });
+  var slopState = { loading: false, data: null, error: null };
 
-  // Update coordinate display on mouse move
-  sharedMap.on('mousemove', (e) => {
-    const coordEl = $('mapCoordsBar');
-    if (coordEl) {
-      coordEl.textContent =
-        `${e.latlng.lat.toFixed(4)}° N  ${e.latlng.lng.toFixed(4)}° E`;
+  function renderSlop() {
+    var out = $('slopResult');
+    if (!out) return;
+    if (slopState.loading) { out.innerHTML = skeleton(); return; }
+    if (slopState.error)   { out.innerHTML = '<div class="verdict-banner verdict-warn">⚠ ' + escHtml(slopState.error) + '</div>'; return; }
+    if (!slopState.data)   { out.innerHTML = '<p class="empty-state">Enter discharge parameters and run a check.</p>'; return; }
+    var d = slopState.data;
+    out.innerHTML =
+      statusBadge(d.zone_status) +
+      '<p style="margin:0.75rem 0;font-size:0.88rem;color:var(--text);">' + escHtml(d.summary) + '</p>' +
+      '<div class="result-row"><span class="result-label">Distance to nearest land</span>' +
+      '<span class="result-value mono">' + fmt(d.distance_to_nearest_land_nm) + ' NM</span></div>' +
+      '<div style="margin-top:1rem;"><div class="result-label" style="margin-bottom:0.5rem;">RULES CHECKLIST</div>' +
+      (safeArr(d.rules_checklist).map(ruleRow).join('') || '<p class="empty-state">No rules evaluated.</p>') + '</div>' +
+      '<div style="margin-top:1rem;"><div class="result-label" style="margin-bottom:0.5rem;">ACTIVE OIL / NLS ZONES</div>' +
+      zonesTable(safeArr(d.active_zones)) + '</div>';
+  }
+
+  function submitSlop() {
+    var lat = numFrom('slopLat'), lon = numFrom('slopLon');
+    if (lat == null || lon == null) { toast('Please enter valid latitude and longitude.', 'warn'); return; }
+
+    var cargo_is_nls = boolFrom('cargoIsNls');
+
+    slopState.loading = true; slopState.error = null; slopState.data = null;
+    renderSlop();
+
+    postJson(ENDPOINTS.checkSlop, {
+      ship_id:              textFrom('slopShipId', 'SHIP_001'),
+      latitude:             lat,
+      longitude:            lon,
+      ship_speed_knots:     numFrom('shipSpeed')     || 0,
+      oil_content_ppm:      numFrom('oilContent')    || 0,
+      discharge_rate_lpnm:  numFrom('dischargeRate') || 0,
+      tank_capacity_m3:     numFrom('tankCapacity')  || 0,
+      odmcs_operational:    boolFrom('odmcsOp'),
+      cargo_is_nls:         cargo_is_nls,
+      nls_category:         cargo_is_nls ? (textFrom('nlsCategory') || null) : null,
+    })
+    .then(function (data) {
+      slopState.loading = false; slopState.data = data; slopState.error = null;
+      renderSlop();
+      placeMarker(layerGroups.slop, lat, lon, data.zone_status, 'slop');
+      historyAdd({ type: 'Slop Check', lat: lat, lon: lon, status: data.zone_status, summary: data.summary });
+      toast('Slop check complete: ' + data.zone_status, data.zone_status === 'SAFE' ? 'success' : 'warn');
+    })
+    .catch(function (e) {
+      slopState.loading = false; slopState.data = null; slopState.error = e.message;
+      renderSlop();
+      toast(e.message, 'error');
+    });
+  }
+
+  /* ═══════════════════ ROUTE PANEL ═══════════════════ */
+
+  var routeState = { loading: false, data: null, error: null };
+
+  function renderRoute() {
+    var out = $('routeResult');
+    if (!out) return;
+    if (routeState.loading) { out.innerHTML = skeleton(); return; }
+    if (routeState.error)   { out.innerHTML = '<div class="verdict-banner verdict-warn">⚠ ' + escHtml(routeState.error) + '</div>'; return; }
+    if (!routeState.data)   { out.innerHTML = '<p class="empty-state">Set position and route endpoints, then run a check.</p>'; return; }
+    var d = routeState.data;
+    var routeSafe = (d.route_status === 'ON_ROUTE');
+
+    out.innerHTML =
+      statusBadge(routeSafe ? 'SAFE' : 'RESTRICTED') +
+      '<p style="margin:0.75rem 0;font-size:0.88rem;color:var(--text);">' + escHtml(d.summary) + '</p>' +
+      '<div class="result-row"><span class="result-label">Route Status</span><span class="result-value">' + escHtml(d.route_status) + '</span></div>' +
+      '<div class="result-row"><span class="result-label">Cross-track Distance</span><span class="result-value mono">' + fmt(d.cross_track_distance_nm) + ' NM</span></div>' +
+      '<div class="result-row"><span class="result-label">Route Progress</span><span class="result-value mono">' + fmt(d.route_progress_percent, 1) + '%</span></div>' +
+      '<div class="result-row"><span class="result-label">Route Length</span><span class="result-value mono">' + fmt(d.total_route_distance_nm) + ' NM</span></div>' +
+      (safeArr(d.zones_crossed).length ?
+        '<div style="margin-top:1rem;"><div class="result-label" style="margin-bottom:0.5rem;">ZONES CROSSED</div>' + zonesTable(safeArr(d.zones_crossed)) + '</div>' : '');
+
+    if (sharedMap && safeArr(d.route_points).length >= 2) {
+      if (routePolyline) { try { layerGroups.route.removeLayer(routePolyline); } catch(e) {} }
+      routePolyline = L.polyline(d.route_points, { color: COLORS.primary, weight: 3, opacity: 0.85 }).addTo(layerGroups.route);
+      sharedMap.fitBounds(routePolyline.getBounds(), { padding: [40, 40] });
     }
-  });
-}
 
-// ─── Health Polling ───────────────────────────────────────────────────────────
+    var rLat = numFrom('routeLat'), rLon = numFrom('routeLon');
+    if (rLat != null && rLon != null) {
+      placeMarker(layerGroups.route, rLat, rLon, routeSafe ? 'SAFE' : 'RESTRICTED', 'route');
+    }
+  }
 
-async function pollHealth() {
-  let intervalId = null;
+  function submitRoute() {
+    routeState.loading = true; routeState.error = null; routeState.data = null;
+    renderRoute();
 
-  const check = async () => {
+    postJson(ENDPOINTS.checkRoute, {
+      ship_id:               textFrom('routeShipId', 'SHIP_001'),
+      latitude:              numFrom('routeLat')  || 0,
+      longitude:             numFrom('routeLon')  || 0,
+      origin_port:           textFrom('originPort') || null,
+      destination_port:      textFrom('destPort')   || null,
+      origin_latitude:       numFrom('originLat'),
+      origin_longitude:      numFrom('originLon'),
+      destination_latitude:  numFrom('destLat'),
+      destination_longitude: numFrom('destLon'),
+      corridor_width_nm:     numFrom('corridorWidth') || 25,
+    })
+    .then(function (data) {
+      routeState.loading = false; routeState.data = data; routeState.error = null;
+      renderRoute();
+      historyAdd({
+        type: 'Route Check',
+        lat:  numFrom('routeLat') || 0,
+        lon:  numFrom('routeLon') || 0,
+        status:  data.route_status === 'ON_ROUTE' ? 'SAFE' : 'RESTRICTED',
+        summary: data.summary,
+      });
+      toast('Route check complete: ' + data.route_status, data.route_status === 'ON_ROUTE' ? 'success' : 'warn');
+    })
+    .catch(function (e) {
+      routeState.loading = false; routeState.data = null; routeState.error = e.message;
+      renderRoute();
+      toast(e.message, 'error');
+    });
+  }
+
+  /* ═══════════════════ NLS TOGGLE ═══════════════════ */
+
+  function bindNlsToggle() {
+    var chk = $('cargoIsNls'), row = $('nlsCategoryRow');
+    if (!chk || !row) return;
+    var update = function () { row.style.display = chk.checked ? 'flex' : 'none'; };
+    chk.addEventListener('change', update);
+    update();
+  }
+
+  /* ═══════════════════ TABS ═══════════════════ */
+
+  var panelMap = { zonePanel: 'zone', slopPanel: 'slop', routePanel: 'route', historyPanel: null };
+
+  function initTabs() {
+    var tabs = document.querySelectorAll('.tab-btn');
+    tabs.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        tabs.forEach(function (b) { b.classList.remove('active'); });
+        document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.remove('active'); });
+        btn.classList.add('active');
+        var panelId = btn.dataset.tab;
+        var panel   = $(panelId);
+        if (panel) panel.classList.add('active');
+        var mapKey  = panelMap[panelId];
+        if (mapKey) switchPanel(mapKey);
+        if (sharedMap) setTimeout(function () { sharedMap.invalidateSize(); }, 100);
+      });
+    });
+  }
+
+  /* ═══════════════════ BOOT MANAGER ═══════════════════ */
+
+  function hideLoader() {
+    var loader = $('loader');
+    if (loader) loader.classList.add('hidden');
+  }
+
+  function safeRun(name, fn) {
     try {
-      const t0  = performance.now();
-      const res = await fetchWithTimeout(`${API_BASE}/health`, {}, 8_000);
-      const ms  = Math.round(performance.now() - t0);
-
-      if (res.ok) {
-        setHealthStatus('online');
-        const el = $('kpiLatency');
-        if (el) el.textContent = `${ms} ms`;
-      } else {
-        setHealthStatus('degraded');
-      }
+      fn();
     } catch (err) {
-      console.warn('[Health] API unreachable.', err.message);
-      setHealthStatus('offline');
+      console.error('[Boot] "' + name + '" failed — continuing in degraded mode.', err);
     }
-  };
-
-  await check();
-  intervalId = setInterval(check, HEALTH_POLL_MS);
-  return () => clearInterval(intervalId); // return cleanup fn
-}
-
-function setHealthStatus(status) {
-  const dot   = $('healthDot');
-  const label = $('healthLabel');
-
-  const MAP = {
-    online   : { cls: 'online',   text: 'API Online'   },
-    degraded : { cls: 'degraded', text: 'API Degraded' },
-    offline  : { cls: 'offline',  text: 'API Offline'  },
-  };
-
-  const s = MAP[status] ?? MAP.offline;
-
-  if (dot) {
-    dot.className = `health-dot ${s.cls}`;
-  }
-  if (label) {
-    label.textContent = s.text;
-  }
-}
-
-// ─── Event Listeners ─────────────────────────────────────────────────────────
-
-function attachEventListeners() {
-  // Tab buttons are wired in initTabs().
-
-  // Clear history button — HTML may use onclick="clearHistory()" OR we wire it here.
-  const clearBtn = $('clearHistoryBtn') || document.querySelector('[onclick*="clearHistory"]');
-  if (clearBtn) {
-    clearBtn.removeAttribute('onclick');
-    clearBtn.addEventListener('click', clearHistory);
   }
 
-  // Wire form buttons — these may use inline onclick in the HTML.
-  // We expose globals so inline onclick attrs still work even without wiring here.
-  window.checkZone  = submitZone;
-  window.checkSlop  = submitSlop;
-  window.checkRoute = submitRoute;
-  window.clearHistory = clearHistory;
+  function boot() {
+    // Hard deadline: loader MUST disappear within 5 seconds regardless of anything.
+    var forceHide = setTimeout(hideLoader, 5000);
 
-  // If buttons exist with IDs, also wire directly for resilience
-  $('zoneSubmit') ?.addEventListener('click', submitZone);
-  $('slopSubmit') ?.addEventListener('click', submitSlop);
-  $('routeSubmit')?.addEventListener('click', submitRoute);
-}
+    var globe = null;
 
-// ─── Zone Check ───────────────────────────────────────────────────────────────
-
-async function submitZone() {
-  const lat = num('zoneLatInput');
-  const lon = num('zoneLonInput');
-
-  if (isNaN(lat) || isNaN(lon)) {
-    showResult('zoneResult', 'error', '⚠️ Please enter valid latitude and longitude.');
-    return;
-  }
-
-  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-    showResult('zoneResult', 'error', '⚠️ Coordinates out of range.');
-    return;
-  }
-
-  showResult('zoneResult', 'loading', 'Checking zone…');
-
-  try {
-    const res  = await fetchWithTimeout(
-      `${API_BASE}/check-zone?lat=${lat}&lon=${lon}`,
-    );
-    const data = await res.json();
-
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-
-    // Update globe
-    globe?.setPin(lat, lon);
-    globe?.focusOn(lat, lon);
-
-    // Update map
-    placeMapMarker(lat, lon, 'zone');
-
-    // Update KPIs
-    sessionStats.checks++;
-    if (!data.compliant) sessionStats.violations++;
-    updateKpis();
-
-    // Record history
-    addHistory({ type: 'zone', lat, lon, result: data, ts: Date.now() });
-
-    renderZoneResult(data);
-  } catch (err) {
-    console.error('[Zone] Check failed.', err);
-    showResult('zoneResult', 'error', `❌ Request failed: ${err.message}`);
-  }
-}
-
-function renderZoneResult(data) {
-  const compliant = data.compliant ?? data.is_compliant ?? true;
-  const zones     = data.zones     ?? data.matched_zones ?? [];
-
-  let html = `
-    <div class="result-status ${compliant ? 'compliant' : 'violation'}">
-      ${compliant
-        ? '✅ <strong>COMPLIANT</strong> — Position is outside restricted zones.'
-        : '🚫 <strong>VIOLATION</strong> — Position is within a restricted zone.'}
-    </div>`;
-
-  if (zones.length) {
-    html += '<ul class="zone-list">';
-    for (const z of zones) {
-      const name = z.name || z.zone_name || z;
-      const type = z.zone_type || '';
-      html += `<li><strong>${name}</strong>${type ? ` — ${type}` : ''}</li>`;
-    }
-    html += '</ul>';
-  }
-
-  showResult('zoneResult', compliant ? 'compliant' : 'violation', html, true);
-}
-
-// ─── Slop Check ───────────────────────────────────────────────────────────────
-
-async function submitSlop() {
-  const lat        = num('slopLatInput');
-  const lon        = num('slopLonInput');
-  const oilContent = num('slopOilContent');
-
-  if (isNaN(lat) || isNaN(lon)) {
-    showResult('slopResult', 'error', '⚠️ Please enter valid coordinates.');
-    return;
-  }
-
-  showResult('slopResult', 'loading', 'Evaluating slop discharge…');
-
-  try {
-    const body = {
-      lat,
-      lon,
-      oil_content_ppm : isNaN(oilContent) ? undefined : oilContent,
-    };
-
-    const res  = await fetchWithTimeout(`${API_BASE}/check-slop`, {
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      body    : JSON.stringify(body),
-    });
-    const data = await res.json();
-
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-
-    globe?.setPin(lat, lon);
-    globe?.focusOn(lat, lon);
-    placeMapMarker(lat, lon, 'slop');
-
-    sessionStats.checks++;
-    if (!(data.compliant ?? data.is_compliant ?? true)) sessionStats.violations++;
-    updateKpis();
-
-    addHistory({ type: 'slop', lat, lon, result: data, ts: Date.now() });
-    renderSlopResult(data);
-  } catch (err) {
-    console.error('[Slop] Check failed.', err);
-    showResult('slopResult', 'error', `❌ Request failed: ${err.message}`);
-  }
-}
-
-function renderSlopResult(data) {
-  const compliant = data.compliant ?? data.is_compliant ?? true;
-  const limit     = data.limit_ppm   ?? data.oil_limit_ppm ?? '—';
-  const actual    = data.oil_content_ppm ?? '—';
-
-  const html = `
-    <div class="result-status ${compliant ? 'compliant' : 'violation'}">
-      ${compliant
-        ? '✅ <strong>DISCHARGE PERMITTED</strong>'
-        : '🚫 <strong>DISCHARGE PROHIBITED</strong>'}
-    </div>
-    <div class="result-detail">
-      Oil Content: <strong>${actual} ppm</strong> /
-      Limit: <strong>${limit} ppm</strong>
-    </div>
-    ${data.reason ? `<div class="result-reason">${data.reason}</div>` : ''}
-  `;
-
-  showResult('slopResult', compliant ? 'compliant' : 'violation', html, true);
-}
-
-// ─── Route Check ──────────────────────────────────────────────────────────────
-
-async function submitRoute() {
-  // HTML uses a textarea with id="routeWaypoints" containing JSON array or newline coords
-  const raw = str('routeWaypoints');
-
-  if (!raw) {
-    showResult('routeResult', 'error', '⚠️ Please enter route waypoints.');
-    return;
-  }
-
-  let waypoints;
-  try {
-    waypoints = parseWaypoints(raw);
-  } catch (err) {
-    showResult('routeResult', 'error', `⚠️ Invalid waypoints format: ${err.message}`);
-    return;
-  }
-
-  if (waypoints.length < 2) {
-    showResult('routeResult', 'error', '⚠️ Route requires at least 2 waypoints.');
-    return;
-  }
-
-  showResult('routeResult', 'loading', 'Analysing route…');
-
-  try {
-    const res  = await fetchWithTimeout(`${API_BASE}/check-route`, {
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      body    : JSON.stringify({ waypoints }),
-    });
-    const data = await res.json();
-
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-
-    renderRouteOnMap(waypoints);
-
-    sessionStats.checks++;
-    if (!(data.compliant ?? true)) sessionStats.violations++;
-    updateKpis();
-
-    addHistory({ type: 'route', waypoints, result: data, ts: Date.now() });
-    renderRouteResult(data);
-  } catch (err) {
-    console.error('[Route] Check failed.', err);
-    showResult('routeResult', 'error', `❌ Request failed: ${err.message}`);
-  }
-}
-
-/**
- * Parse waypoints from:
- * - JSON array: [[lat,lon],[lat,lon]]
- * - Newline-separated: "lat,lon\nlat,lon"
- */
-function parseWaypoints(raw) {
-  raw = raw.trim();
-
-  if (raw.startsWith('[')) {
-    const parsed = JSON.parse(raw);
-    return parsed.map((p, i) => {
-      if (Array.isArray(p) && p.length >= 2) return { lat: p[0], lon: p[1] };
-      if (typeof p === 'object' && 'lat' in p) return p;
-      throw new Error(`Invalid waypoint at index ${i}`);
-    });
-  }
-
-  // Newline-separated "lat,lon"
-  return raw.split('\n').map((line, i) => {
-    const parts = line.split(',').map(s => parseFloat(s.trim()));
-    if (parts.length < 2 || parts.some(isNaN)) {
-      throw new Error(`Invalid waypoint at line ${i + 1}: "${line}"`);
-    }
-    return { lat: parts[0], lon: parts[1] };
-  });
-}
-
-function renderRouteResult(data) {
-  const compliant  = data.compliant ?? true;
-  const violations = data.violations ?? data.zone_violations ?? [];
-
-  let html = `
-    <div class="result-status ${compliant ? 'compliant' : 'violation'}">
-      ${compliant
-        ? '✅ <strong>ROUTE COMPLIANT</strong> — No MARPOL violations detected.'
-        : `🚫 <strong>ROUTE VIOLATION</strong> — ${violations.length} segment(s) affected.`}
-    </div>`;
-
-  if (violations.length) {
-    html += '<ul class="zone-list">';
-    for (const v of violations) {
-      const zone = v.zone_name || v.zone || v;
-      html += `<li>${zone}</li>`;
-    }
-    html += '</ul>';
-  }
-
-  showResult('routeResult', compliant ? 'compliant' : 'violation', html, true);
-}
-
-// ─── Map Utilities ────────────────────────────────────────────────────────────
-
-let _mapMarkers = [];
-let _routeLayer = null;
-
-function placeMapMarker(lat, lon, type) {
-  if (!sharedMap) return;
-
-  try {
-    // Remove previous marker of same type
-    _mapMarkers = _mapMarkers.filter(({ marker, t }) => {
-      if (t === type) {
-        sharedMap.removeLayer(marker);
-        return false;
+    safeRun('globe', function () {
+      if (typeof GlobeController !== 'undefined') {
+        globe = new GlobeController('globe-canvas');
       }
-      return true;
     });
 
-    const colors = { zone: '#ff6b35', slop: '#00d4aa', route: '#4ecdc4' };
-    const color  = colors[type] ?? '#ffffff';
+    safeRun('maps', function () { initMaps(); });
 
-    const icon = L.divIcon({
-      className : '',
-      html      : `<div style="
-        width:14px;height:14px;border-radius:50%;
-        background:${color};border:2px solid #fff;
-        box-shadow:0 0 8px ${color}88;
-      "></div>`,
-      iconSize  : [14, 14],
-      iconAnchor: [7, 7],
+    safeRun('zonesOverlay', function () {
+      setTimeout(loadZonesOverlay, 1500);
     });
 
-    const marker = L.marker([lat, lon], { icon }).addTo(sharedMap);
-    marker.bindPopup(`${type.toUpperCase()}: ${lat.toFixed(4)}, ${lon.toFixed(4)}`);
-    _mapMarkers.push({ marker, t: type });
+    safeRun('health', function () {
+      pollHealth();
+      setInterval(pollHealth, HEALTH_POLL_MS);
+    });
 
-    sharedMap.setView([lat, lon], Math.max(sharedMap.getZoom(), 4), { animate: true });
-  } catch (err) {
-    console.warn('[Map] placeMapMarker failed.', err);
+    safeRun('history', function () {
+      renderHistory();
+      updateKpis();
+    });
+
+    safeRun('nlsToggle', function () { bindNlsToggle(); });
+
+    safeRun('tabs', function () { initTabs(); });
+
+    safeRun('buttons', function () {
+      var zs = $('zoneSubmit');
+      if (zs) zs.addEventListener('click', function () { submitZone(globe); });
+
+      var ss = $('slopSubmit');
+      if (ss) ss.addEventListener('click', submitSlop);
+
+      var rs = $('routeSubmit');
+      if (rs) rs.addEventListener('click', submitRoute);
+
+      var ch = $('clearHistory');
+      if (ch) ch.addEventListener('click', function () {
+        try { localStorage.removeItem(HISTORY_KEY); } catch(e) {}
+        renderHistory();
+        updateKpis();
+        toast('History cleared', 'info');
+      });
+    });
+
+    // All sync setup done — remove the loader.
+    clearTimeout(forceHide);
+    hideLoader();
   }
-}
 
-function renderRouteOnMap(waypoints) {
-  if (!sharedMap) return;
-
-  try {
-    if (_routeLayer) {
-      sharedMap.removeLayer(_routeLayer);
-      _routeLayer = null;
-    }
-
-    const latlngs = waypoints.map(wp => [wp.lat, wp.lon]);
-    _routeLayer = L.polyline(latlngs, {
-      color  : '#00d4aa',
-      weight : 3,
-      opacity: 0.85,
-      dashArray: '6 4',
-    }).addTo(sharedMap);
-
-    sharedMap.fitBounds(_routeLayer.getBounds(), { padding: [30, 30] });
-  } catch (err) {
-    console.warn('[Map] renderRouteOnMap failed.', err);
-  }
-}
-
-// ─── KPI Updates ──────────────────────────────────────────────────────────────
-
-function updateKpis() {
-  const checksEl     = $('kpiChecks');
-  const violationsEl = $('kpiViolations');
-  const zonesEl      = $('kpiZones');
-
-  if (checksEl)     checksEl.textContent     = sessionStats.checks;
-  if (violationsEl) violationsEl.textContent = sessionStats.violations;
-  if (zonesEl)      zonesEl.textContent      = sessionStats.checks - sessionStats.violations;
-}
-
-// ─── Result Card Helper ───────────────────────────────────────────────────────
-
-/**
- * @param {string}  cardId   - element ID of the result card
- * @param {string}  state    - 'loading' | 'error' | 'compliant' | 'violation'
- * @param {string}  html     - inner HTML to render
- * @param {boolean} [raw]    - if true, html is already safe markup (not escaped)
- */
-function showResult(cardId, state, html, raw = false) {
-  const el = $(cardId);
-  if (!el) return;
-
-  el.className = `result-card ${state}`;
-  el.classList.remove('hidden');
-
-  const inner = raw ? html : `<p>${html}</p>`;
-
-  if (state === 'loading') {
-    el.innerHTML = `
-      <div class="result-loading">
-        <span class="spinner"></span>
-        <span>${html}</span>
-      </div>`;
+  /* ── Entry point ── */
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
   } else {
-    el.innerHTML = inner;
-  }
-}
-
-// ─── History ──────────────────────────────────────────────────────────────────
-
-const HISTORY_KEY    = 'marpol_history';
-const HISTORY_LIMIT  = 50;
-
-function loadHistory() {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    queryHistory = raw ? JSON.parse(raw) : [];
-  } catch {
-    queryHistory = [];
-  }
-}
-
-function saveHistory() {
-  try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(queryHistory.slice(0, HISTORY_LIMIT)));
-  } catch (err) {
-    console.warn('[History] localStorage write failed.', err);
-  }
-}
-
-function addHistory(entry) {
-  queryHistory.unshift(entry);
-  if (queryHistory.length > HISTORY_LIMIT) queryHistory.length = HISTORY_LIMIT;
-  saveHistory();
-  renderHistory();
-}
-
-function clearHistory() {
-  queryHistory = [];
-  saveHistory();
-  renderHistory();
-}
-
-function renderHistory() {
-  const el = $('historyList');
-  if (!el) return;
-
-  if (!queryHistory.length) {
-    el.innerHTML = '<p class="history-empty">No queries yet. Run a check to see history.</p>';
-    return;
+    boot();
   }
 
-  el.innerHTML = queryHistory.map((entry, i) => {
-    const date     = new Date(entry.ts).toLocaleString();
-    const compliant = entry.result?.compliant ?? entry.result?.is_compliant ?? true;
-    const badge    = compliant
-      ? '<span class="badge compliant">✅ COMPLIANT</span>'
-      : '<span class="badge violation">🚫 VIOLATION</span>';
+  /* ═══════════════════ NOTE: MAP CONTAINER ═══════════════════
+   * The Live Map tab has been removed from this index.html to keep the
+   * architecture clean. The shared Leaflet map (#leafletMap) is referenced
+   * from initMaps() but the HTML only has per-panel result cards.
+   * If you want the live map tab back, add:
+   *   <section id="mapPanel" class="tab-panel">
+   *     <div id="leafletMap" style="height:560px;width:100%;"></div>
+   *   </section>
+   * and add a tab button with data-tab="mapPanel".
+   ════════════════════════════════════════════════════════════ */
 
-    let detail = '';
-    if (entry.type === 'zone' || entry.type === 'slop') {
-      detail = `${entry.lat?.toFixed(4) ?? '—'}°, ${entry.lon?.toFixed(4) ?? '—'}°`;
-    } else if (entry.type === 'route') {
-      detail = `${entry.waypoints?.length ?? 0} waypoints`;
-    }
-
-    return `
-      <div class="history-item" data-index="${i}">
-        <div class="history-meta">
-          <span class="history-type">${entry.type.toUpperCase()}</span>
-          ${badge}
-          <span class="history-time">${date}</span>
-        </div>
-        <div class="history-detail">${detail}</div>
-      </div>`;
-  }).join('');
-}
+}(window));

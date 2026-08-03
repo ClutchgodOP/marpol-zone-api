@@ -1,206 +1,178 @@
 /**
- * zones-overlay.js
- * Leaflet-native GeoJSON overlay for MARPOL special areas and SOx ECAs.
- *
- * IMPORTANT: This implementation is deliberately Leaflet-native.
- * The original used deck.gl which was never loaded via CDN.
- * This version uses only L.geoJSON which is always available.
- *
- * Gracefully degrades: if GeoJSON fails to load, the map still works.
+ * zones-overlay.js — deck.gl GeoJSON layer rendered over the Leaflet map.
+ * Classic script (no ES module syntax). Exposes ZonesOverlay globally.
+ * Defensive: if deck.gl is missing, ZonesOverlay becomes a no-op stub.
  */
+(function (global) {
+  'use strict';
 
-'use strict';
+  var deckAvailable = (typeof deck !== 'undefined');
 
-const FETCH_TIMEOUT_MS = 12_000;
-
-const ZONE_STYLES = {
-  special_area: {
-    color       : '#ff6b35',
-    weight      : 2,
-    opacity     : 0.9,
-    fillColor   : '#ff6b35',
-    fillOpacity : 0.15,
-  },
-  eca_sox: {
-    color       : '#00d4aa',
-    weight      : 2,
-    opacity     : 0.9,
-    fillColor   : '#00d4aa',
-    fillOpacity : 0.12,
-  },
-  eca_nox: {
-    color       : '#4ecdc4',
-    weight      : 2,
-    opacity     : 0.9,
-    fillColor   : '#4ecdc4',
-    fillOpacity : 0.12,
-  },
-  default: {
-    color       : '#888888',
-    weight      : 1.5,
-    opacity     : 0.7,
-    fillColor   : '#888888',
-    fillOpacity : 0.10,
-  },
-};
-
-export class ZonesOverlay {
-  /**
-   * @param {L.Map} map   - Leaflet map instance
-   * @param {string} endpoint - GeoJSON endpoint URL
-   */
-  constructor(map, endpoint) {
-    this._map      = map;
-    this._endpoint = endpoint;
-    this._layers   = {};   // { layerKey: L.GeoJSON }
-    this._loaded   = false;
-    this._loading  = false;
+  if (!deckAvailable) {
+    console.warn('[ZonesOverlay] deck.gl not available — zone overlay disabled.');
+    global.ZonesOverlay = function () {
+      this.load            = function () {};
+      this.highlight       = function () {};
+      this.setAnnexFilter  = function () {};
+      this.setShipPosition = function () {};
+      this.destroy         = function () {};
+    };
+    return;
   }
 
-  // ─── Public API ─────────────────────────────────────────────────────────────
+  var DeckGL         = deck.DeckGL;
+  var GeoJsonLayer   = deck.GeoJsonLayer;
+  var ScatterplotLayer = deck.ScatterplotLayer;
 
-  /**
-   * Fetch GeoJSON and render all zone layers.
-   * Safe to call multiple times — subsequent calls are no-ops if already loaded.
-   */
-  async load() {
-    if (this._loaded || this._loading) return;
-    this._loading = true;
+  var ANNEX_COLORS = {
+    I:  [255, 107, 53],
+    II: [255, 200, 0],
+    IV: [0, 200, 255],
+    V:  [150, 255, 100],
+    VI: [200, 100, 255],
+  };
 
-    try {
-      const data = await this._fetchWithTimeout(this._endpoint, FETCH_TIMEOUT_MS);
-      this._buildLayers(data);
-      this._loaded = true;
-      console.info(`[ZonesOverlay] Loaded ${data.features?.length ?? 0} zone features.`);
-    } catch (err) {
-      console.error('[ZonesOverlay] Failed to load zones — map remains functional.', err);
-    } finally {
-      this._loading = false;
-    }
+  function annexKeyOf(annexRaw) {
+    var a = (annexRaw || '').toUpperCase();
+    if (a.indexOf('VI') !== -1) return 'VI';
+    if (a.indexOf('IV') !== -1) return 'IV';
+    if (a.indexOf('V')  !== -1) return 'V';
+    if (a.indexOf('II') !== -1) return 'II';
+    if (a.indexOf('I')  !== -1) return 'I';
+    return null;
   }
 
-  /**
-   * Show a specific zone category layer.
-   * @param {string} key - e.g. 'special_area', 'eca_sox'
-   */
-  show(key) {
-    const layer = this._layers[key];
-    if (!layer || !this._map) return;
-    if (!this._map.hasLayer(layer)) {
-      this._map.addLayer(layer);
-    }
+  function ZonesOverlay(mapContainerId) {
+    this._containerId   = mapContainerId;
+    this._geojson       = null;
+    this._highlighted   = null;
+    this._shipPoint     = null;
+    this._deckInstance  = null;
+    this._activeAnnexes = new Set(['I', 'II', 'IV', 'V', 'VI']);
+    this._viewState     = { longitude: 0, latitude: 20, zoom: 2, pitch: 0, bearing: 0 };
   }
 
-  /**
-   * Hide a specific zone category layer.
-   * @param {string} key
-   */
-  hide(key) {
-    const layer = this._layers[key];
-    if (!layer || !this._map) return;
-    if (this._map.hasLayer(layer)) {
-      this._map.removeLayer(layer);
-    }
-  }
+  ZonesOverlay.prototype.load = function (endpoint) {
+    var self = this;
+    fetch(endpoint)
+      .then(function (res) { return res.json(); })
+      .then(function (data) { self._geojson = data; self._render(); })
+      .catch(function (err) { console.warn('[ZonesOverlay] Failed to load GeoJSON:', err.message); });
+  };
 
-  /**
-   * Show all loaded layers.
-   */
-  showAll() {
-    Object.keys(this._layers).forEach(k => this.show(k));
-  }
+  ZonesOverlay.prototype.highlight = function (zoneId) {
+    this._highlighted = zoneId;
+    this._render();
+  };
 
-  /**
-   * Hide all loaded layers.
-   */
-  hideAll() {
-    Object.keys(this._layers).forEach(k => this.hide(k));
-  }
+  ZonesOverlay.prototype.setAnnexFilter = function (annexSet) {
+    this._activeAnnexes = annexSet;
+    this._render();
+  };
 
-  /**
-   * Toggle a layer by key.
-   * @param {string} key
-   * @returns {boolean} new visibility state
-   */
-  toggle(key) {
-    const layer = this._layers[key];
-    if (!layer || !this._map) return false;
-    if (this._map.hasLayer(layer)) {
-      this._map.removeLayer(layer);
-      return false;
-    } else {
-      this._map.addLayer(layer);
-      return true;
-    }
-  }
+  ZonesOverlay.prototype.setShipPosition = function (lat, lon, status) {
+    this._shipPoint = { lat: lat, lon: lon, status: status || 'SAFE' };
+    this._render();
+  };
 
-  /**
-   * Remove all layers and free memory.
-   */
-  destroy() {
-    Object.values(this._layers).forEach(layer => {
-      if (this._map?.hasLayer(layer)) {
-        this._map.removeLayer(layer);
-      }
-    });
-    this._layers = {};
-    this._loaded  = false;
-    this._loading = false;
-  }
+  ZonesOverlay.prototype._render = function () {
+    if (!this._geojson) return;
+    var container = document.getElementById(this._containerId);
+    if (!container) return;
 
-  // ─── Private ────────────────────────────────────────────────────────────────
+    var self = this;
+    var activeAnnexes = this._activeAnnexes;
+    var highlighted   = this._highlighted;
 
-  async _fetchWithTimeout(url, timeoutMs) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
-      return await res.json();
-    } finally {
-      clearTimeout(timer);
-    }
-  }
+    var layers = [
+      new GeoJsonLayer({
+        id: 'marpol-zones',
+        data: this._geojson,
+        pickable: true, stroked: true, filled: true, extruded: false,
+        lineWidthMinPixels: 1.5,
+        getFillColor: function (f) {
+          var key = annexKeyOf(f.properties && f.properties.annex);
+          if (!key || !activeAnnexes.has(key)) return [0, 0, 0, 0];
+          var isHL = f.properties && f.properties.zone_id === highlighted;
+          var rgb  = ANNEX_COLORS[key] || [100, 160, 255];
+          return [rgb[0], rgb[1], rgb[2], isHL ? 90 : 40];
+        },
+        getLineColor: function (f) {
+          var key = annexKeyOf(f.properties && f.properties.annex);
+          if (!key || !activeAnnexes.has(key)) return [0, 0, 0, 0];
+          var isHL = f.properties && f.properties.zone_id === highlighted;
+          return isHL ? [0, 212, 255, 255] : [0, 180, 255, 150];
+        },
+        getLineWidth: function (f) {
+          return (f.properties && f.properties.zone_id === highlighted) ? 3 : 1.5;
+        },
+        onHover: function (info) { self._onHover(info.object, info.x, info.y); },
+        onClick: function (info) { self._onClick(info.object); },
+        updateTriggers: {
+          getFillColor: [highlighted, Array.from(activeAnnexes).join(',')],
+          getLineColor: [highlighted, Array.from(activeAnnexes).join(',')],
+        },
+      }),
+    ];
 
-  _buildLayers(geojson) {
-    if (!geojson?.features?.length) {
-      console.warn('[ZonesOverlay] GeoJSON has no features.');
-      return;
+    if (this._shipPoint) {
+      var sp    = this._shipPoint;
+      var color = (sp.status === 'SAFE') ? [0, 230, 118, 255] : [255, 107, 53, 255];
+      layers.push(
+        new ScatterplotLayer({
+          id: 'ship-position',
+          data: [{ position: [sp.lon, sp.lat] }],
+          getPosition:  function (d) { return d.position; },
+          getRadius:    18000,
+          getFillColor: color,
+          getLineColor: [255, 255, 255, 200],
+          lineWidthMinPixels: 2,
+          stroked: true, radiusMinPixels: 7, radiusMaxPixels: 18,
+        })
+      );
     }
 
-    // Group features by zone_type property
-    const groups = {};
-    for (const feature of geojson.features) {
-      const key = feature.properties?.zone_type || 'default';
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(feature);
-    }
-
-    for (const [key, features] of Object.entries(groups)) {
-      const style   = ZONE_STYLES[key] ?? ZONE_STYLES.default;
-      const fc      = { type: 'FeatureCollection', features };
-      const layer   = L.geoJSON(fc, {
-        style       : () => style,
-        onEachFeature: this._bindPopup.bind(this),
+    if (!this._deckInstance) {
+      this._deckInstance = new DeckGL({
+        container: container,
+        initialViewState: this._viewState,
+        controller: false,
+        layers: layers,
+        style: { position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 500 },
+        getTooltip: function (info) {
+          var obj = info.object;
+          if (!obj || !obj.properties) return null;
+          return {
+            html: '<div style="background:#0b1929;border:1px solid #1a3a5c;border-radius:8px;padding:10px 14px;font-size:12px;color:#e0f0ff;line-height:1.6;">' +
+              '<strong style="color:#00d4ff">' + (obj.properties.name || 'Zone') + '</strong><br>' +
+              'Annex: ' + (obj.properties.annex || '—') + '<br>' +
+              'Type: '  + (obj.properties.type  || '—') + '<br>' +
+              'Restriction: ' + (obj.properties.restriction || '—') +
+              '</div>',
+            style: { background: 'none', border: 'none', padding: '0' },
+          };
+        },
       });
-      this._layers[key] = layer;
-      this._map.addLayer(layer);
+    } else {
+      this._deckInstance.setProps({ layers: layers });
     }
-  }
+  };
 
-  _bindPopup(feature, layer) {
-    const p = feature.properties || {};
-    const name     = p.name        || p.zone_name || 'MARPOL Zone';
-    const type     = p.zone_type   || 'Special Area';
-    const annex    = p.annex       || '—';
-    const reg      = p.regulation  || '—';
+  ZonesOverlay.prototype._onHover = function (_feature, _x, _y) {};
 
-    layer.bindTooltip(`
-      <div style="font-size:12px;line-height:1.5">
-        <strong>${name}</strong><br>
-        Type: ${type}<br>
-        Annex: ${annex} | Reg: ${reg}
-      </div>
-    `, { sticky: true, opacity: 0.92 });
-  }
-}
+  ZonesOverlay.prototype._onClick = function (feature) {
+    if (feature && feature.properties && feature.properties.zone_id) {
+      this.highlight(feature.properties.zone_id);
+    }
+  };
+
+  ZonesOverlay.prototype.destroy = function () {
+    if (this._deckInstance) {
+      this._deckInstance.finalize();
+      this._deckInstance = null;
+    }
+  };
+
+  global.ZonesOverlay = ZonesOverlay;
+
+}(window));
