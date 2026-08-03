@@ -4,344 +4,291 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Volteo Maritime — MARPOL Compliance Dashboard</title>
+  <meta name="description" content="Enterprise MARPOL zone compliance platform for maritime discharge decisions." />
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.167.1/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.167.1/examples/jsm/"
-    }
-  }
-  </script>
+  <!-- Leaflet CSS — must load BEFORE JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/deck.gl@9.0.25/dist.min.js"></script>
-  <link rel="stylesheet" href="/static/css/dashboard.css" />
+  <!-- Dashboard CSS -->
+  <link rel="stylesheet" href="static/css/dashboard.css" />
 </head>
 <body>
 
-<!-- ─────────────────────────────────────────
-     LOADER
-───────────────────────────────────────── -->
-<div id="loader">
-  <div class="loader-ring"></div>
-  <p class="loader-text">Initialising MARPOL Engine</p>
-</div>
+  <!-- ── Loading Screen ── -->
+  <div id="loader" role="status" aria-label="Loading Volteo Maritime">
+    <div class="loader-ring"></div>
+    <div class="loader-text">Initializing Maritime Systems</div>
+  </div>
 
-<!-- ─────────────────────────────────────────
-     TOAST STACK
-───────────────────────────────────────── -->
-<div id="toastStack" aria-live="polite"></div>
+  <!-- ── Toast Stack ── -->
+  <div id="toastStack" role="alert" aria-live="polite"></div>
 
-<!-- ─────────────────────────────────────────
-     HEADER
-───────────────────────────────────────── -->
-<header>
-  <span class="logo">⚓ Volteo Maritime</span>
-  <span class="badge">MARPOL v4.0</span>
-  <nav>
-    <span class="health-indicator">
+  <!-- ── Header ── -->
+  <header>
+    <span class="logo">⚓ Volteo Maritime</span>
+    <span class="badge">MARPOL v5.0</span>
+    <div class="health-indicator" id="healthStatus" title="Backend API Status">
       <span id="healthDot"></span>
       <span id="healthLabel">Checking…</span>
-    </span>
-    <a href="https://volteo-maritime-marpol-zone-api.up.railway.app/docs" target="_blank" rel="noopener">API Docs</a>
-    <a href="https://github.com/ClutchgodOP/marpol-zone-api.git" target="_blank" rel="noopener">GitHub</a>
-    <a href="https://www.imo.org/en/ourwork/environment/pages/special-areas-marpol.aspx" target="_blank" rel="noopener">IMO</a>
-  </nav>
-</header>
-
-<!-- ─────────────────────────────────────────
-     GLOBE HERO
-───────────────────────────────────────── -->
-<section id="globe-section">
-  <canvas id="globe-canvas"></canvas>
-  <div class="globe-overlay">
-    <h1>MARPOL Zone Intelligence</h1>
-    <p>Real-time discharge compliance across all MARPOL Annexes I–VI, powered by IMO-sourced zone geometry and MEPC 84 regulatory updates.</p>
-  </div>
-  <div class="globe-scrim"></div>
-</section>
-
-<!-- ─────────────────────────────────────────
-     KPI STRIP
-───────────────────────────────────────── -->
-<div class="kpi-strip reveal">
-  <div class="kpi-card">
-    <span class="kpi-label">Checks Today</span>
-    <strong class="kpi-value" id="kpiChecks">0</strong>
-  </div>
-  <div class="kpi-card">
-    <span class="kpi-label">Compliance Rate</span>
-    <strong class="kpi-value" id="kpiCompliance">—</strong>
-  </div>
-  <div class="kpi-card">
-    <span class="kpi-label">Active Zones Tracked</span>
-    <strong class="kpi-value" id="kpiZones">—</strong>
-  </div>
-  <div class="kpi-card">
-    <span class="kpi-label">API Latency</span>
-    <strong class="kpi-value" id="kpiLatency">—</strong>
-  </div>
-</div>
-
-<!-- ─────────────────────────────────────────
-     MAIN CONTENT
-───────────────────────────────────────── -->
-<main>
-
-  <!-- ── COMPLIANCE CHECK CARD ── -->
-  <div class="card reveal">
-    <div class="tabs">
-      <button class="tab-btn active" data-tab="zonePanel">Zone Check</button>
-      <button class="tab-btn" data-tab="slopPanel">Slop / Oil Check</button>
-      <button class="tab-btn" data-tab="routePanel">Route Check</button>
     </div>
+    <nav>
+      <a href="https://volteo-maritime-marpol-zone-api.up.railway.app/docs"
+         target="_blank" rel="noopener noreferrer">API Docs</a>
+      <a href="https://www.imo.org/en/OurWork/Environment/Pages/Pollution-Prevention.aspx"
+         target="_blank" rel="noopener noreferrer">IMO MARPOL</a>
+    </nav>
+  </header>
 
-    <div class="workspace">
+  <!-- ── Hero Globe Section ── -->
+  <section id="globe-section" aria-label="Global maritime zone visualization">
+    <canvas id="globe-canvas" aria-label="Interactive 3D globe showing MARPOL zones"></canvas>
+    <div class="globe-scrim"></div>
+    <div class="globe-overlay">
+      <h1>MARPOL Zone<br>Compliance Engine</h1>
+      <p>Real-time discharge legality decisions for maritime operations. Powered by IMO-validated geospatial zone data.</p>
+    </div>
+  </section>
 
-      <!-- ── FORMS COLUMN ── -->
-      <div class="workspace-forms">
+  <!-- ── KPI Strip ── -->
+  <section class="kpi-strip" aria-label="System statistics">
+    <div class="kpi-card">
+      <div class="kpi-value" id="kpiZones">—</div>
+      <div class="kpi-label">MARPOL Zones</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value" id="kpiChecks">—</div>
+      <div class="kpi-label">Checks Today</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value" id="kpiViolations">—</div>
+      <div class="kpi-label">Violations Flagged</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value" id="kpiLatency">—</div>
+      <div class="kpi-label">Avg Latency (ms)</div>
+    </div>
+  </section>
 
-        <!-- ── ZONE CHECK PANEL ── -->
-        <div class="tab-panel active" id="zonePanel">
-          <div class="form-row">
-            <label>Ship ID</label>
-            <input type="text" id="shipId" value="SHIP_101" placeholder="e.g. SHIP_101" />
+  <!-- ── Main Dashboard ── -->
+  <main class="dashboard-layout">
+
+    <!-- ── Tab Navigation ── -->
+    <nav class="tab-bar" role="tablist" aria-label="Dashboard sections">
+      <button class="tab-btn active" role="tab" aria-selected="true"
+              aria-controls="panel-zone" id="tab-zone" data-tab="zone">
+        📍 Zone Check
+      </button>
+      <button class="tab-btn" role="tab" aria-selected="false"
+              aria-controls="panel-slop" id="tab-slop" data-tab="slop">
+        🛢 Slop / Oil Check
+      </button>
+      <button class="tab-btn" role="tab" aria-selected="false"
+              aria-controls="panel-route" id="tab-route" data-tab="route">
+        🗺 Route Check
+      </button>
+      <button class="tab-btn" role="tab" aria-selected="false"
+              aria-controls="panel-map" id="tab-map" data-tab="map">
+        🌊 Live Map
+      </button>
+      <button class="tab-btn" role="tab" aria-selected="false"
+              aria-controls="panel-history" id="tab-history" data-tab="history">
+        📋 History
+      </button>
+    </nav>
+
+    <!-- ── Zone Check Panel ── -->
+    <section id="panel-zone" class="tab-panel active" role="tabpanel"
+             aria-labelledby="tab-zone">
+      <div class="panel-grid">
+        <div class="form-card">
+          <h2 class="card-title">Zone Compliance Check</h2>
+          <p class="card-subtitle">Enter vessel coordinates to determine MARPOL zone status and applicable discharge restrictions.</p>
+
+          <div class="form-group">
+            <label for="zoneLatInput">Latitude</label>
+            <input type="number" id="zoneLatInput" placeholder="e.g. 51.5074"
+                   step="0.0001" min="-90" max="90" autocomplete="off" />
           </div>
-          <div class="form-row-split">
-            <div class="form-row">
-              <label>Latitude</label>
-              <input type="number" id="lat" value="36.0" step="0.001" min="-90" max="90" />
-            </div>
-            <div class="form-row">
-              <label>Longitude</label>
-              <input type="number" id="lon" value="14.0" step="0.001" min="-180" max="180" />
-            </div>
+          <div class="form-group">
+            <label for="zoneLonInput">Longitude</label>
+            <input type="number" id="zoneLonInput" placeholder="e.g. -0.1278"
+                   step="0.0001" min="-180" max="180" autocomplete="off" />
           </div>
+
           <div class="form-row">
-            <label>Waste Type Filter (optional)</label>
-            <select id="wasteFilter">
-              <option value="">All types</option>
-              <option value="Oil">Oil (Annex I)</option>
-              <option value="Noxious Liquid Substances">NLS (Annex II)</option>
-              <option value="Sewage">Sewage (Annex IV)</option>
-              <option value="Garbage">Garbage (Annex V)</option>
-              <option value="Air Pollution (SOx/NOx ECA)">Air Pollution ECA (Annex VI)</option>
+            <button class="btn-primary" id="zoneCheckBtn" onclick="checkZone()">
+              <span class="btn-icon">📡</span> Check Zone
+            </button>
+            <button class="btn-ghost" onclick="useMyLocation('zone')">
+              <span class="btn-icon">📌</span> Use GPS
+            </button>
+          </div>
+
+          <div class="coord-hint" id="zoneCoordHint"></div>
+        </div>
+
+        <div id="zoneResult" class="result-card hidden" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- ── Slop / Oil Check Panel ── -->
+    <section id="panel-slop" class="tab-panel" role="tabpanel"
+             aria-labelledby="tab-slop">
+      <div class="panel-grid">
+        <div class="form-card">
+          <h2 class="card-title">Slop &amp; Oil Discharge Check</h2>
+          <p class="card-subtitle">Validate discharge legality under MARPOL Annex I regulations for oily water and slop tank operations.</p>
+
+          <div class="form-group">
+            <label for="slopLatInput">Latitude</label>
+            <input type="number" id="slopLatInput" placeholder="e.g. 25.0000"
+                   step="0.0001" min="-90" max="90" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="slopLonInput">Longitude</label>
+            <input type="number" id="slopLonInput" placeholder="e.g. 55.0000"
+                   step="0.0001" min="-180" max="180" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="slopOilContent">Oil Content (ppm)</label>
+            <input type="number" id="slopOilContent" placeholder="e.g. 12"
+                   step="0.1" min="0" max="10000" autocomplete="off" />
+            <span class="field-hint">MARPOL Annex I limit: 15 ppm in Special Areas</span>
+          </div>
+          <div class="form-group">
+            <label for="slopVesselType">Vessel Type</label>
+            <select id="slopVesselType">
+              <option value="">— Select vessel type —</option>
+              <option value="tanker">Tanker</option>
+              <option value="non_tanker">Non-Tanker</option>
+              <option value="platform">Offshore Platform</option>
             </select>
           </div>
-          <button class="btn-primary" id="zoneSubmit"><span>Run Zone Check</span></button>
-          <div class="section-label">Result</div>
-          <div id="zoneResult"><p class="empty-state">Enter a position and run a check.</p></div>
+
+          <div class="form-row">
+            <button class="btn-primary" id="slopCheckBtn" onclick="checkSlop()">
+              <span class="btn-icon">🔬</span> Validate Discharge
+            </button>
+            <button class="btn-ghost" onclick="useMyLocation('slop')">
+              <span class="btn-icon">📌</span> Use GPS
+            </button>
+          </div>
         </div>
 
-        <!-- ── SLOP / OIL CHECK PANEL ── -->
-        <div class="tab-panel" id="slopPanel">
+        <div id="slopResult" class="result-card hidden" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- ── Route Check Panel ── -->
+    <section id="panel-route" class="tab-panel" role="tabpanel"
+             aria-labelledby="tab-route">
+      <div class="panel-grid">
+        <div class="form-card">
+          <h2 class="card-title">Voyage Route Check</h2>
+          <p class="card-subtitle">Validate an entire voyage route against MARPOL zone boundaries. Enter waypoints as coordinate pairs.</p>
+
+          <div class="form-group">
+            <label for="routeWaypoints">Waypoints (lat,lon per line)</label>
+            <textarea id="routeWaypoints" rows="6"
+              placeholder="51.5074, -0.1278&#10;48.8566, 2.3522&#10;41.9028, 12.4964"
+              spellcheck="false"></textarea>
+            <span class="field-hint">One coordinate pair per line. Minimum 2 waypoints required.</span>
+          </div>
+
           <div class="form-row">
-            <label>Ship ID</label>
-            <input type="text" id="slopShipId" value="SHIP_101" placeholder="e.g. SHIP_101" />
+            <button class="btn-primary" id="routeCheckBtn" onclick="checkRoute()">
+              <span class="btn-icon">🗺</span> Analyze Route
+            </button>
+            <button class="btn-ghost" onclick="clearRoute()">
+              <span class="btn-icon">✕</span> Clear
+            </button>
           </div>
-          <div class="form-row-split">
-            <div class="form-row">
-              <label>Latitude</label>
-              <input type="number" id="slopLat" value="36.0" step="0.001" min="-90" max="90" />
-            </div>
-            <div class="form-row">
-              <label>Longitude</label>
-              <input type="number" id="slopLon" value="14.0" step="0.001" min="-180" max="180" />
-            </div>
-          </div>
-          <div class="form-row-split">
-            <div class="form-row">
-              <label>Speed (knots)</label>
-              <input type="number" id="shipSpeed" value="8.5" step="0.1" min="0" max="50" />
-            </div>
-            <div class="form-row">
-              <label>Oil Content (ppm)</label>
-              <input type="number" id="oilContent" value="12" step="0.1" min="0" />
-            </div>
-          </div>
-          <div class="form-row-split">
-            <div class="form-row">
-              <label>Discharge Rate (L/NM)</label>
-              <input type="number" id="dischargeRate" value="25" step="0.1" min="0" />
-            </div>
-            <div class="form-row">
-              <label>Tank Capacity (m³)</label>
-              <input type="number" id="tankCapacity" value="5000" step="1" min="0" />
-            </div>
-          </div>
-          <div class="form-row checkbox-row">
-            <input type="checkbox" id="odmcsOp" checked />
-            <label for="odmcsOp" style="margin:0">ODMCS Operational</label>
-          </div>
-          <div class="form-row checkbox-row">
-            <input type="checkbox" id="cargoIsNls" />
-            <label for="cargoIsNls" style="margin:0">
-              Cargo is NLS <span class="nls-badge">Annex II</span>
-            </label>
-          </div>
-          <div class="form-row" id="nlsCategoryRow" style="display:none">
-            <label>NLS Category</label>
-            <select id="nlsCategory">
-              <option value="X">Category X</option>
-              <option value="Y">Category Y</option>
-              <option value="Z">Category Z</option>
-              <option value="OS">Other Substances (OS)</option>
-            </select>
-          </div>
-          <button class="btn-primary" id="slopSubmit"><span>Run Slop Check</span></button>
-          <div class="section-label">Result</div>
-          <div id="slopResult"><p class="empty-state">Enter discharge parameters and run a check.</p></div>
         </div>
 
-        <!-- ── ROUTE CHECK PANEL ── -->
-        <div class="tab-panel" id="routePanel">
-          <div class="form-row">
-            <label>Ship ID</label>
-            <input type="text" id="routeShipId" value="SHIP_101" placeholder="e.g. SHIP_101" />
+        <div id="routeResult" class="result-card hidden" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- ── Live Map Panel ── -->
+    <section id="panel-map" class="tab-panel" role="tabpanel"
+             aria-labelledby="tab-map">
+      <div class="map-panel">
+        <div class="map-toolbar">
+          <span class="map-toolbar-title">🌊 Live MARPOL Zone Map</span>
+          <div class="map-toolbar-actions">
+            <button class="btn-ghost btn-sm" onclick="mapFitWorld()" title="Fit to world">⊞ Fit</button>
+            <button class="btn-ghost btn-sm" onclick="mapToggleZones()" id="zonesToggleBtn" title="Toggle zone overlays">◉ Zones</button>
+            <button class="btn-ghost btn-sm" onclick="mapClearMarkers()" title="Clear markers">✕ Clear</button>
           </div>
-          <div class="form-row-split">
-            <div class="form-row">
-              <label>Current Latitude</label>
-              <input type="number" id="routeLat" value="36.0" step="0.001" min="-90" max="90" />
-            </div>
-            <div class="form-row">
-              <label>Current Longitude</label>
-              <input type="number" id="routeLon" value="14.0" step="0.001" min="-180" max="180" />
-            </div>
-          </div>
-          <div class="form-row">
-            <label>Origin Port (optional)</label>
-            <input type="text" id="originPort" placeholder="e.g. Valletta" />
-          </div>
-          <div class="form-row-split">
-            <div class="form-row">
-              <label>Origin Latitude</label>
-              <input type="number" id="originLat" step="0.001" min="-90" max="90" />
-            </div>
-            <div class="form-row">
-              <label>Origin Longitude</label>
-              <input type="number" id="originLon" step="0.001" min="-180" max="180" />
-            </div>
-          </div>
-          <div class="form-row">
-            <label>Destination Port (optional)</label>
-            <input type="text" id="destPort" placeholder="e.g. Piraeus" />
-          </div>
-          <div class="form-row-split">
-            <div class="form-row">
-              <label>Destination Latitude</label>
-              <input type="number" id="destLat" step="0.001" min="-90" max="90" />
-            </div>
-            <div class="form-row">
-              <label>Destination Longitude</label>
-              <input type="number" id="destLon" step="0.001" min="-180" max="180" />
-            </div>
-          </div>
-          <div class="form-row">
-            <label>Corridor Width (NM)</label>
-            <input type="number" id="corridorWidth" value="25" step="1" min="1" />
-          </div>
-          <button class="btn-primary" id="routeSubmit"><span>Run Route Check</span></button>
-          <div class="section-label">Result</div>
-          <div id="routeResult"><p class="empty-state">Set current position and route endpoints, then run a check.</p></div>
         </div>
-
-      </div><!-- /workspace-forms -->
-
-      <!-- ── MAP COLUMN ── -->
-      <div class="workspace-map">
-        <div class="panel-map" id="sharedMap">
-
-          <!-- Leaflet renders into #leafletMap, NOT into #sharedMap directly -->
-          <div id="leafletMap" style="height:100%;width:100%;border-radius:14px;"></div>
-
-          <!-- Loading shimmer -->
-          <div class="map-loading-overlay" id="mapLoader">
-            <div class="loader-ring"></div>
-          </div>
-
-          <!-- Legend -->
-          <div id="zoneLegend" class="glass-panel legend-panel">
-            <div class="legend-title">MARPOL Annexes</div>
-            <label><input type="checkbox" data-annex="I"   checked><span class="dot" style="background:#ff6b35"></span>Annex I — Oil</label>
-            <label><input type="checkbox" data-annex="II"  checked><span class="dot" style="background:#ffc800"></span>Annex II — NLS</label>
-            <label><input type="checkbox" data-annex="IV"  checked><span class="dot" style="background:#00c8ff"></span>Annex IV — Sewage</label>
-            <label><input type="checkbox" data-annex="V"   checked><span class="dot" style="background:#96ff64"></span>Annex V — Garbage</label>
-            <label><input type="checkbox" data-annex="VI"  checked><span class="dot" style="background:#c864ff"></span>Annex VI — Air (ECA)</label>
-          </div>
-
-          <!-- Coordinate readout -->
-          <div class="map-coords-bar" id="mapCoordsBar">Lat — &nbsp; Lon —</div>
-
-          <!-- Crosshair -->
-          <div class="map-crosshair" id="mapCrosshair"></div>
-
+        <!-- FIX: explicit height + visibility:visible ensures Leaflet measures correctly -->
+        <div id="map" style="height:560px;width:100%;" aria-label="Interactive MARPOL compliance map"></div>
+        <div class="map-legend">
+          <span class="legend-item legend-special">● Special Area</span>
+          <span class="legend-item legend-eca">● ECA Zone</span>
+          <span class="legend-item legend-no-discharge">● No Discharge</span>
+          <span class="legend-item legend-open">● Open Ocean</span>
         </div>
-        <p class="map-hint">Click anywhere on the map to set coordinates for the active panel.</p>
-      </div><!-- /workspace-map -->
+      </div>
+    </section>
 
-    </div><!-- /workspace -->
-  </div><!-- /card -->
+    <!-- ── History Panel ── -->
+    <section id="panel-history" class="tab-panel" role="tabpanel"
+             aria-labelledby="tab-history">
+      <div class="history-panel">
+        <div class="history-header">
+          <h2 class="card-title">Check History</h2>
+          <div class="history-actions">
+            <button class="btn-ghost btn-sm" onclick="exportHistory()">⬇ Export CSV</button>
+            <button class="btn-ghost btn-sm" onclick="clearHistory()">✕ Clear</button>
+          </div>
+        </div>
+        <div id="historyList" class="history-list">
+          <div class="empty-state">
+            <div class="empty-icon">📋</div>
+            <p>No checks performed yet. Run a zone, slop, or route check to see history here.</p>
+          </div>
+        </div>
+      </div>
+    </section>
 
-  <!-- ── CHECK HISTORY CARD ── -->
-  <div class="card reveal" style="margin-top:1.5rem">
-    <div class="history-header">
-      <p class="card-title" style="margin:0">Check History</p>
-      <button class="btn-ghost" id="clearHistory">Clear</button>
-    </div>
-    <div id="historyList">
-      <p class="empty-state">No checks yet. Run a zone, slop, or route check above.</p>
+  </main>
+
+  <!-- ── Coordinate Picker Modal ── -->
+  <div id="coordModal" class="modal-backdrop hidden" role="dialog"
+       aria-modal="true" aria-labelledby="coordModalTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="coordModalTitle">📍 Pick Coordinates</h3>
+        <button class="modal-close" onclick="closeCoordModal()" aria-label="Close">✕</button>
+      </div>
+      <div id="coordPickerMap" style="height:340px;width:100%;border-radius:8px;overflow:hidden;"></div>
+      <div class="modal-footer">
+        <span id="pickedCoordDisplay" class="coord-display">Click map to select location</span>
+        <button class="btn-primary btn-sm" id="confirmCoordBtn" onclick="confirmCoordPick()" disabled>
+          Confirm Location
+        </button>
+      </div>
     </div>
   </div>
 
-  <!-- ── ADVANCED: API BASE URL OVERRIDE ── -->
-  <div class="api-base-row">
-    <input
-      type="text"
-      id="apiBase"
-      placeholder="Override API base URL (advanced, optional)"
-    />
-  </div>
+  <!-- ── Scripts — defer prevents blocking ── -->
+  <!-- Leaflet JS — loaded AFTER CSS, before our code -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLs=" crossorigin=""></script>
 
-</main>
+  <!-- Three.js for globe -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
-<!-- ─────────────────────────────────────────
-     FOOTER
-───────────────────────────────────────── -->
-<footer>
-  Volteo Maritime MARPOL Compliance API v4.0 &mdash;
-  Zone data sourced from IMO resolutions incl. MEPC.407(84) &mdash;
-  <a href="https://volteo-maritime-marpol-zone-api.up.railway.app/docs" target="_blank" rel="noopener">API Docs</a>
-  &middot;
-  <a href="https://www.imo.org" target="_blank" rel="noopener">IMO.org</a>
-</footer>
-
-<!-- ─────────────────────────────────────────
-     SCRIPTS
-───────────────────────────────────────── -->
-
-<!-- Main dashboard module (Three.js globe, Leaflet map, API calls, tab logic) -->
-<script type="module" src="/static/js/dashboard.js"></script>
-
-<!-- Intersection Observer: reveal cards on scroll -->
-<script>
-  const revealEls = document.querySelectorAll('.reveal');
-  const io = new IntersectionObserver(
-    (entries) => {
-      entries.forEach(e => {
-        if (e.isIntersecting) e.target.classList.add('visible');
-      });
-    },
-    { threshold: 0.1 }
-  );
-  revealEls.forEach(el => io.observe(el));
-</script>
-
+  <!-- Our modules — order matters -->
+  <script src="static/js/globe.js"></script>
+  <script src="static/js/zones-overlay.js"></script>
+  <script src="static/js/dashboard.js"></script>
 </body>
 </html>
