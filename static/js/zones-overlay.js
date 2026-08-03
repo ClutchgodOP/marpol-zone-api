@@ -1,62 +1,60 @@
 /**
- * zones-overlay.js — deck.gl GeoJSON layer rendered over the Leaflet map.
+ * zones-overlay.js — native Leaflet GeoJSON layer for the live MARPOL map.
  * Classic script (no ES module syntax). Exposes ZonesOverlay globally.
- * Defensive: if deck.gl is missing, ZonesOverlay becomes a no-op stub.
  */
 (function (global) {
   'use strict';
 
-  var deckAvailable = (typeof deck !== 'undefined');
-
-  if (!deckAvailable) {
-    console.warn('[ZonesOverlay] deck.gl not available — zone overlay disabled.');
+  if (typeof L === 'undefined') {
+    console.warn('[ZonesOverlay] Leaflet not available — zone overlay disabled.');
     global.ZonesOverlay = function () {
-      this.load            = function () {};
-      this.highlight       = function () {};
-      this.setAnnexFilter  = function () {};
-      this.setShipPosition = function () {};
-      this.destroy         = function () {};
+      this.load = this.highlight = this.setAnnexFilter = this.setShipPosition = this.destroy = function () {};
     };
     return;
   }
 
-  var DeckGL         = deck.DeckGL;
-  var GeoJsonLayer   = deck.GeoJsonLayer;
-  var ScatterplotLayer = deck.ScatterplotLayer;
+  var ANNEX_COLORS = { I: '#ff6b35', II: '#ffc800', IV: '#00c8ff', V: '#96ff64', VI: '#c864ff' };
 
-  var ANNEX_COLORS = {
-    I:  [255, 107, 53],
-    II: [255, 200, 0],
-    IV: [0, 200, 255],
-    V:  [150, 255, 100],
-    VI: [200, 100, 255],
-  };
-
-  function annexKeyOf(annexRaw) {
-    var a = (annexRaw || '').toUpperCase();
-    if (a.indexOf('VI') !== -1) return 'VI';
-    if (a.indexOf('IV') !== -1) return 'IV';
-    if (a.indexOf('V')  !== -1) return 'V';
-    if (a.indexOf('II') !== -1) return 'II';
-    if (a.indexOf('I')  !== -1) return 'I';
+  function annexKeyOf(value) {
+    var annex = String(value || '').toUpperCase();
+    if (annex.indexOf('VI') !== -1) return 'VI';
+    if (annex.indexOf('IV') !== -1) return 'IV';
+    if (annex.indexOf('V') !== -1) return 'V';
+    if (annex.indexOf('II') !== -1) return 'II';
+    if (annex.indexOf('I') !== -1) return 'I';
     return null;
   }
 
-  function ZonesOverlay(mapContainerId) {
-    this._containerId   = mapContainerId;
-    this._geojson       = null;
-    this._highlighted   = null;
-    this._shipPoint     = null;
-    this._deckInstance  = null;
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function ZonesOverlay(map) {
+    this._map = map;
+    this._geojson = null;
+    this._highlighted = null;
+    this._shipPoint = null;
+    this._layer = null;
+    this._shipLayer = null;
+    this.onLoad = null;
     this._activeAnnexes = new Set(['I', 'II', 'IV', 'V', 'VI']);
-    this._viewState     = { longitude: 0, latitude: 20, zoom: 2, pitch: 0, bearing: 0 };
   }
 
   ZonesOverlay.prototype.load = function (endpoint) {
     var self = this;
     fetch(endpoint)
-      .then(function (res) { return res.json(); })
-      .then(function (data) { self._geojson = data; self._render(); })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        if (!data || !Array.isArray(data.features)) throw new Error('Invalid GeoJSON response');
+        self._geojson = data;
+        self._render();
+        if (typeof self.onLoad === 'function') self.onLoad(data.features.length);
+      })
       .catch(function (err) { console.warn('[ZonesOverlay] Failed to load GeoJSON:', err.message); });
   };
 
@@ -66,7 +64,7 @@
   };
 
   ZonesOverlay.prototype.setAnnexFilter = function (annexSet) {
-    this._activeAnnexes = annexSet;
+    this._activeAnnexes = annexSet instanceof Set ? annexSet : new Set(annexSet || []);
     this._render();
   };
 
@@ -76,103 +74,49 @@
   };
 
   ZonesOverlay.prototype._render = function () {
-    if (!this._geojson) return;
-    var container = document.getElementById(this._containerId);
-    if (!container) return;
-
+    if (!this._geojson || !this._map) return;
     var self = this;
-    var activeAnnexes = this._activeAnnexes;
-    var highlighted   = this._highlighted;
+    if (this._layer) this._map.removeLayer(this._layer);
+    if (this._shipLayer) this._map.removeLayer(this._shipLayer);
 
-    var layers = [
-      new GeoJsonLayer({
-        id: 'marpol-zones',
-        data: this._geojson,
-        pickable: true, stroked: true, filled: true, extruded: false,
-        lineWidthMinPixels: 1.5,
-        getFillColor: function (f) {
-          var key = annexKeyOf(f.properties && f.properties.annex);
-          if (!key || !activeAnnexes.has(key)) return [0, 0, 0, 0];
-          var isHL = f.properties && f.properties.zone_id === highlighted;
-          var rgb  = ANNEX_COLORS[key] || [100, 160, 255];
-          return [rgb[0], rgb[1], rgb[2], isHL ? 90 : 40];
-        },
-        getLineColor: function (f) {
-          var key = annexKeyOf(f.properties && f.properties.annex);
-          if (!key || !activeAnnexes.has(key)) return [0, 0, 0, 0];
-          var isHL = f.properties && f.properties.zone_id === highlighted;
-          return isHL ? [0, 212, 255, 255] : [0, 180, 255, 150];
-        },
-        getLineWidth: function (f) {
-          return (f.properties && f.properties.zone_id === highlighted) ? 3 : 1.5;
-        },
-        onHover: function (info) { self._onHover(info.object, info.x, info.y); },
-        onClick: function (info) { self._onClick(info.object); },
-        updateTriggers: {
-          getFillColor: [highlighted, Array.from(activeAnnexes).join(',')],
-          getLineColor: [highlighted, Array.from(activeAnnexes).join(',')],
-        },
-      }),
-    ];
+    this._layer = L.geoJSON(this._geojson, {
+      style: function (feature) {
+        var properties = feature.properties || {};
+        var key = annexKeyOf(properties.annex);
+        var visible = key && self._activeAnnexes.has(key);
+        var highlighted = properties.zone_id === self._highlighted;
+        return {
+          color: highlighted ? '#00d4ff' : (ANNEX_COLORS[key] || '#64a0ff'),
+          weight: highlighted ? 3 : 1.5,
+          opacity: visible ? 0.9 : 0,
+          fillOpacity: visible ? (highlighted ? 0.34 : 0.16) : 0,
+        };
+      },
+      onEachFeature: function (feature, layer) {
+        var p = feature.properties || {};
+        layer.bindTooltip('<strong>' + escapeHtml(p.name || 'Zone') + '</strong><br>' +
+          'Annex: ' + escapeHtml(p.annex || '—') + '<br>' +
+          'Type: ' + escapeHtml(p.type || '—') + '<br>' + escapeHtml(p.restriction || '—'),
+          { sticky: true, className: 'zone-tooltip' });
+        layer.on('click', function () { self.highlight(p.zone_id); });
+      },
+    }).addTo(this._map);
 
     if (this._shipPoint) {
-      var sp    = this._shipPoint;
-      var color = (sp.status === 'SAFE') ? [0, 230, 118, 255] : [255, 107, 53, 255];
-      layers.push(
-        new ScatterplotLayer({
-          id: 'ship-position',
-          data: [{ position: [sp.lon, sp.lat] }],
-          getPosition:  function (d) { return d.position; },
-          getRadius:    18000,
-          getFillColor: color,
-          getLineColor: [255, 255, 255, 200],
-          lineWidthMinPixels: 2,
-          stroked: true, radiusMinPixels: 7, radiusMaxPixels: 18,
-        })
-      );
-    }
-
-    if (!this._deckInstance) {
-      this._deckInstance = new DeckGL({
-        container: container,
-        initialViewState: this._viewState,
-        controller: false,
-        layers: layers,
-        style: { position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 500 },
-        getTooltip: function (info) {
-          var obj = info.object;
-          if (!obj || !obj.properties) return null;
-          return {
-            html: '<div style="background:#0b1929;border:1px solid #1a3a5c;border-radius:8px;padding:10px 14px;font-size:12px;color:#e0f0ff;line-height:1.6;">' +
-              '<strong style="color:#00d4ff">' + (obj.properties.name || 'Zone') + '</strong><br>' +
-              'Annex: ' + (obj.properties.annex || '—') + '<br>' +
-              'Type: '  + (obj.properties.type  || '—') + '<br>' +
-              'Restriction: ' + (obj.properties.restriction || '—') +
-              '</div>',
-            style: { background: 'none', border: 'none', padding: '0' },
-          };
-        },
-      });
-    } else {
-      this._deckInstance.setProps({ layers: layers });
-    }
-  };
-
-  ZonesOverlay.prototype._onHover = function (_feature, _x, _y) {};
-
-  ZonesOverlay.prototype._onClick = function (feature) {
-    if (feature && feature.properties && feature.properties.zone_id) {
-      this.highlight(feature.properties.zone_id);
+      var ship = this._shipPoint;
+      this._shipLayer = L.circleMarker([ship.lat, ship.lon], {
+        radius: 8, color: '#ffffff', weight: 2,
+        fillColor: ship.status === 'SAFE' ? '#00e676' : '#ff6b35', fillOpacity: 1,
+      }).addTo(this._map);
     }
   };
 
   ZonesOverlay.prototype.destroy = function () {
-    if (this._deckInstance) {
-      this._deckInstance.finalize();
-      this._deckInstance = null;
-    }
+    if (this._layer) this._map.removeLayer(this._layer);
+    if (this._shipLayer) this._map.removeLayer(this._shipLayer);
+    this._layer = null;
+    this._shipLayer = null;
   };
 
   global.ZonesOverlay = ZonesOverlay;
-
 }(window));

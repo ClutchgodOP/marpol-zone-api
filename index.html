@@ -11,9 +11,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
-  <!-- Leaflet CSS — must load BEFORE Leaflet JS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <!-- Leaflet CSS. jsDelivr supplies immutable versioned assets. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Dashboard CSS -->
   <link rel="stylesheet" href="/static/css/dashboard.css" />
@@ -286,13 +285,11 @@
   </main>
 
   <!-- ── External Libraries (classic scripts — no type=module) ── -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLs=" crossorigin=""></script>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
   <!-- Our app files — classic scripts, load in dependency order -->
-  <link rel="stylesheet" href="/static/css/dashboard.css" />
   <script src="/static/js/globe.js"></script>
   <script src="/static/js/zones-overlay.js"></script>
   <script src="/static/js/dashboard.js"></script>

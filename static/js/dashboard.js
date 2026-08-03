@@ -293,7 +293,11 @@
 
     if (typeof ZonesOverlay !== 'undefined') {
       try {
-        deckOverlay = new ZonesOverlay('leafletMap');
+        deckOverlay = new ZonesOverlay(sharedMap);
+        deckOverlay.onLoad = function (zoneCount) {
+          var zonesKpi = $('kpiZones');
+          if (zonesKpi) zonesKpi.textContent = String(zoneCount);
+        };
       } catch (err) {
         console.warn('[Dashboard] ZonesOverlay init failed:', err);
       }
@@ -576,7 +580,7 @@
 
   /* ═══════════════════ TABS ═══════════════════ */
 
-  var panelMap = { zonePanel: 'zone', slopPanel: 'slop', routePanel: 'route', historyPanel: null };
+  var panelMap = { mapPanel: null, zonePanel: 'zone', slopPanel: 'slop', routePanel: 'route', historyPanel: null };
 
   function initTabs() {
     var tabs = document.querySelectorAll('.tab-btn');
@@ -672,16 +676,5 @@
   } else {
     boot();
   }
-
-  /* ═══════════════════ NOTE: MAP CONTAINER ═══════════════════
-   * The Live Map tab has been removed from this index.html to keep the
-   * architecture clean. The shared Leaflet map (#leafletMap) is referenced
-   * from initMaps() but the HTML only has per-panel result cards.
-   * If you want the live map tab back, add:
-   *   <section id="mapPanel" class="tab-panel">
-   *     <div id="leafletMap" style="height:560px;width:100%;"></div>
-   *   </section>
-   * and add a tab button with data-tab="mapPanel".
-   ════════════════════════════════════════════════════════════ */
 
 }(window));

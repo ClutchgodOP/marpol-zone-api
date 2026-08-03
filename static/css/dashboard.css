@@ -288,6 +288,18 @@ header nav a:hover       { color: var(--accent); }
 }
 .leaflet-control-zoom a:hover { color: var(--accent) !important; }
 .leaflet-tile-pane { filter: brightness(0.85) saturate(0.7) hue-rotate(180deg); }
+.zone-tooltip {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4) !important;
+  color: var(--text) !important;
+  font-family: var(--font-body) !important;
+  font-size: 0.75rem !important;
+  line-height: 1.5 !important;
+  padding: 0.5rem 0.65rem !important;
+}
+.zone-tooltip::before { border-top-color: var(--border) !important; }
 
 .map-legend {
   display: flex; gap: 1.25rem; flex-wrap: wrap;
