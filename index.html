@@ -79,15 +79,15 @@
 
     <!-- ── Tab Navigation ── -->
     <nav class="tab-bar" role="tablist" aria-label="Dashboard sections">
-      <button class="tab-btn"        role="tab" data-tab="mapPanel">🌊 Live Map</button>
-      <button class="tab-btn active" role="tab" data-tab="zonePanel">📍 Zone Check</button>
+      <button class="tab-btn active" role="tab" data-tab="mapPanel">🌊 Live Map</button>
+      <button class="tab-btn"        role="tab" data-tab="zonePanel">📍 Zone Check</button>
       <button class="tab-btn"        role="tab" data-tab="slopPanel">🛢 Slop / Oil Check</button>
       <button class="tab-btn"        role="tab" data-tab="routePanel">🗺 Route Check</button>
       <button class="tab-btn"        role="tab" data-tab="historyPanel">📋 History</button>
     </nav>
 
     <!-- ── Live Map Panel ── -->
-    <section id="mapPanel" class="tab-panel">
+    <section id="mapPanel" class="tab-panel active">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
         <div style="padding:0.75rem 1rem;border-bottom:1px solid var(--border);background:var(--surface2);font-weight:600;">🌊 Live MARPOL Zone Map</div>
         <div id="leafletMap" style="height:560px;width:100%;"></div>
@@ -95,7 +95,7 @@
     </section>
 
     <!-- ── Zone Check Panel ── -->
-    <section id="zonePanel" class="tab-panel active">
+    <section id="zonePanel" class="tab-panel">
       <div class="panel-grid">
         <div class="form-card">
           <h2 class="card-title">Zone Compliance Check</h2>
