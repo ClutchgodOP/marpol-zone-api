@@ -25,6 +25,28 @@
     <div class="loader-text">Initializing Maritime Systems</div>
   </div>
 
+  <!-- ── Boot watchdog — zero external dependencies ──────────────────────
+       This is the real failsafe. It does not wait on DOMContentLoaded, on
+       Leaflet, on Three.js, or on dashboard.js loading successfully. If a
+       CDN script below stalls or is blocked, the parser will never reach
+       dashboard.js's own 5-second failsafe (it lives inside a file that
+       never ran) — so the one guarantee that matters has to sit here,
+       before any external script is requested. If dashboard.js does load
+       normally, its own hideLoader() call is a harmless no-op duplicate. -->
+  <script>
+    (function () {
+      var hidden = false;
+      function hide() {
+        if (hidden) return;
+        hidden = true;
+        var el = document.getElementById('loader');
+        if (el) el.classList.add('hidden');
+      }
+      setTimeout(hide, 8000);
+      window.__forceHideLoader = hide;
+    })();
+  </script>
+
   <!-- ── Toast Stack ── -->
   <div id="toastStack" role="alert" aria-live="polite"></div>
 
@@ -284,15 +306,22 @@
 
   </main>
 
-  <!-- ── External Libraries (classic scripts — no type=module) ── -->
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- ── External Libraries (classic scripts — no type=module) ──────────────
+       defer: lets the browser fetch these in parallel without blocking
+       HTML parsing. onerror: logs a clear reason instead of silently
+       leaving the map/globe disabled with no signal in the console.
+       Note: the boot watchdog above does NOT depend on defer/onerror to
+       work — it is armed before any of this is even requested. ── -->
+  <script defer src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
+          onerror="console.warn('[Boot] Leaflet CDN failed to load — map disabled.')"></script>
 
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"
+          onerror="console.warn('[Boot] Three.js CDN failed to load — globe disabled.')"></script>
 
   <!-- Our app files — classic scripts, load in dependency order -->
-  <script src="/static/js/globe.js"></script>
-  <script src="/static/js/zones-overlay.js"></script>
-  <script src="/static/js/dashboard.js"></script>
+  <script defer src="/static/js/globe.js"></script>
+  <script defer src="/static/js/zones-overlay.js"></script>
+  <script defer src="/static/js/dashboard.js"></script>
 
 </body>
 </html>
