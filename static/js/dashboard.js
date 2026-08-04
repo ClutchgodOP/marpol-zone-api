@@ -89,7 +89,7 @@
   var _authInflight = null;
 
   function fetchToken() {
-    var url = apiBase() + ENDPOINTS.authToken + '?api_key=' + DEMO_API_KEY;
+    var url = apiBase() + ENDPOINTS.authToken + '?api_key=' + activeApiKey();
     return fetch(url, { method: 'POST' })
       .then(function (res) {
         if (!res.ok) throw new Error('Auth failed: HTTP ' + res.status);
@@ -111,6 +111,108 @@
   }
 
   function invalidateToken() { _authToken = null; _authExpiry = 0; }
+
+    /* ═══════════════════ AUTH MODAL (Phase 1 fix) ═══════════════════
+   * Root cause of "stuck at API Authentication": #authModal is shown by
+   * default in the HTML/CSS, but nothing wired the Demo Mode / Authenticate
+   * buttons to dismiss it. This section makes the modal dismissible
+   * immediately and decouples it from auth actually succeeding — the
+   * dashboard is always usable; auth just unlocks live/authenticated calls.
+   */
+
+  var AUTH_MODE_KEY  = 'marpol_auth_mode';   // 'demo' | 'key'
+  var AUTH_KEY_STORE = 'marpol_user_api_key';
+
+  function activeApiKey() {
+    try {
+      if (sessionStorage.getItem(AUTH_MODE_KEY) === 'key') {
+        return sessionStorage.getItem(AUTH_KEY_STORE) || DEMO_API_KEY;
+      }
+    } catch (e) { /* sessionStorage unavailable — fall back to demo key */ }
+    return DEMO_API_KEY;
+  }
+
+  function hideAuthModal() {
+    var modal = $('authModal');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  function showAuthError(msg) {
+    var box = $('authError');
+    if (!box) return;
+    box.textContent = msg;
+    box.classList.remove('hidden');
+  }
+
+  function initAuthModal() {
+    var modal = $('authModal');
+    if (!modal) return;
+
+    var mode = null;
+    try { mode = sessionStorage.getItem(AUTH_MODE_KEY); } catch (e) {}
+
+    if (mode === 'demo' || mode === 'key') {
+      hideAuthModal();
+      getToken().catch(function () {
+        toast('Running in degraded mode — API auth unavailable.', 'warn');
+      });
+      return;
+    }
+
+    var skipBtn   = $('authSkip');
+    var submitBtn = $('authSubmit');
+    var input     = $('apiKeyInput');
+    var revealBtn = $('revealKey');
+
+    if (skipBtn) {
+      skipBtn.addEventListener('click', function () {
+        try { sessionStorage.setItem(AUTH_MODE_KEY, 'demo'); } catch (e) {}
+        hideAuthModal();
+        toast('Demo mode active — using the public demo API key.', 'info');
+        getToken().catch(function () {
+          toast('Demo auth failed — some live checks may be unavailable.', 'warn');
+        });
+      });
+    }
+
+    if (submitBtn) {
+      submitBtn.addEventListener('click', function () {
+        var key = input && input.value && input.value.trim();
+        if (!key) { showAuthError('Please enter an API key, or choose Demo Mode.'); return; }
+
+        var spinner = submitBtn.querySelector('.btn-spinner');
+        var label   = submitBtn.querySelector('.btn-text');
+        if (spinner) spinner.classList.remove('hidden');
+        if (label)   label.style.opacity = '0.5';
+        submitBtn.disabled = true;
+
+        try {
+          sessionStorage.setItem(AUTH_MODE_KEY, 'key');
+          sessionStorage.setItem(AUTH_KEY_STORE, key);
+        } catch (e) {}
+        invalidateToken();
+
+        getToken().then(function () {
+          hideAuthModal();
+          toast('Authenticated successfully.', 'success');
+        }).catch(function (err) {
+          try { sessionStorage.removeItem(AUTH_MODE_KEY); sessionStorage.removeItem(AUTH_KEY_STORE); } catch (e) {}
+          showAuthError('Authentication failed: ' + err.message + '. Try Demo Mode instead.');
+        }).finally(function () {
+          if (spinner) spinner.classList.add('hidden');
+          if (label)   label.style.opacity = '1';
+          submitBtn.disabled = false;
+        });
+      });
+    }
+
+    if (revealBtn && input) {
+      revealBtn.addEventListener('click', function () {
+        input.type = (input.type === 'password') ? 'text' : 'password';
+      });
+    }
+  }
+
 
   /* ═══════════════════ API LAYER ═══════════════════ */
 
@@ -645,6 +747,8 @@
     safeRun('nlsToggle', function () { bindNlsToggle(); });
 
     safeRun('tabs', function () { initTabs(); });
+    
+    safeRun('authModal', function () { initAuthModal(); });
 
     safeRun('buttons', function () {
       var zs = $('zoneSubmit');
