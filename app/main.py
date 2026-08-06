@@ -74,7 +74,5 @@ async def health():
 
 @app.get("/", include_in_schema=False)
 async def root():
-    """Serve the dashboard when it is present, otherwise fall back to the docs."""
-    if INDEX_HTML.is_file():
-        return FileResponse(str(INDEX_HTML), media_type="text/html")
+    """Always redirect to the interactive API docs."""
     return RedirectResponse(url="/docs")
