@@ -695,8 +695,6 @@ function renderRouteView(result) {
     ${banner(result.summary, result.is_on_route)}
     <div class="tags-wrap">
       ${tag(result.is_on_route ? 'On route' : 'Off route', result.is_on_route ? 'ok' : 'error')}
-      ${tag(result.route_source === 'searoute' ? 'Sea-lane route' : 'Great-circle (fallback)',
-        result.route_source === 'searoute' ? 'ok' : 'warning')}
       ${tag(`${formatNum(Math.abs(Number(result.cross_track_distance_nm || 0)), 2)} NM off track`,
         result.is_on_route ? 'ok' : 'error')}
       ${tag(`${formatNum(result.route_progress_percent, 1)}% progress`, 'warning')}

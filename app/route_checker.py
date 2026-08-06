@@ -1,7 +1,7 @@
 # app/route_checker.py
 from typing import Optional
 
-from app.geo_utils import great_circle_points, maritime_route_points, route_deviation_check
+from app.geo_utils import great_circle_points, route_deviation_check
 from app.ports import get_port
 from app.problem_details import (
     TYPE_INVALID_ROUTE,
@@ -95,7 +95,7 @@ def evaluate_route(
 
     # Sampled geodesic: drawn by the frontend as the planned-track polyline and
     # screened against the spatial index for the special areas the voyage crosses.
-    track_points, route_source = maritime_route_points(
+    track_points = great_circle_points(
         origin["lat"], origin["lon"],
         destination["lat"], destination["lon"],
         segments=ROUTE_TRACK_SEGMENTS,
@@ -107,7 +107,6 @@ def evaluate_route(
         "route_status": route_status,
         "summary": summary,
         "route_points": track_points,
-        "route_source": route_source,   # NEW — additive field, non-breaking
         "zones_crossed": check_zones_along_path(track_points),
         **result,
     }
