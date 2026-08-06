@@ -165,10 +165,7 @@ def build_zone_rules(
                 else "Outside all registered MARPOL special areas"
             ),
             "required_value": "Outside applicable MARPOL special areas",
-            "note": (
-                "If a ship is inside a MARPOL special area, disposal permissions "
-                "depend on the annex-specific restrictions."
-            ),
+            "note": "If a ship is inside a MARPOL special area, disposal permissions depend on the annex-specific restrictions."
         },
         {
             "rule_code": "DISTANCE_12NM",
@@ -176,10 +173,7 @@ def build_zone_rules(
             "passed": far_from_land,
             "actual_value": f"{distance_to_nearest_land_nm:.2f} NM",
             "required_value": ">= 12.00 NM",
-            "note": (
-                "This rule is especially important for operational discharge checks "
-                "and practical disposal guidance."
-            ),
+            "note": "This rule is especially important for operational discharge checks and practical disposal guidance."
         },
     ]
 
@@ -194,27 +188,23 @@ def evaluate_ship_zone(
 
     distance_nm = nearest_land_distance_nm(lat, lon)
     in_special_area = len(active_zones) > 0
-    nearest_land_rule_satisfied = distance_nm >= 12
-
-    zone_status = (
-        "SAFE" if (not in_special_area and nearest_land_rule_satisfied) else "RESTRICTED"
-    )
+    zone_status = "RESTRICTED" if in_special_area else "SAFE"
 
     annex_summary = build_annex_summary(active_zones)
     disposal_assessment = build_disposal_assessment(active_zones, distance_nm)
     rules_checklist = build_zone_rules(active_zones, distance_nm)
 
-    if not in_special_area and nearest_land_rule_satisfied:
-        summary = (
-            "Ship is outside all registered MARPOL special areas and is at least "
-            "12 NM from nearest land."
-        )
-    elif not in_special_area and not nearest_land_rule_satisfied:
-        summary = (
-            "Ship is outside all registered MARPOL special areas, but it is less "
-            "than 12 NM from nearest land. Discharge remains restricted under the "
-            "12 NM rule."
-        )
+    if zone_status == "SAFE":
+        if distance_nm >= 12:
+            summary = (
+                "Ship is outside all registered MARPOL special areas and is at least "
+                "12 NM from nearest land."
+            )
+        else:
+            summary = (
+                "Ship is outside all registered MARPOL special areas, but it is less "
+                "than 12 NM from nearest land."
+            )
     else:
         summary = (
             f"Ship is inside {len(active_zones)} MARPOL restricted zone(s). "
@@ -224,7 +214,7 @@ def evaluate_ship_zone(
     return {
         "evaluation_type": "zone_check",
         "distance_to_nearest_land_nm": distance_nm,
-        "nearest_land_rule_satisfied": nearest_land_rule_satisfied,
+        "nearest_land_rule_satisfied": distance_nm >= 12,
         "in_special_area": in_special_area,
         "zone_status": zone_status,
         "active_zones": active_zones,
@@ -244,19 +234,13 @@ def evaluate_slop_discharge(
     discharge_rate_lpnm: float,
     tank_capacity_m3: float,
     odmcs_operational: bool,
-    # ── Phase 3: NLS / Annex II parameters (optional, default off) ───────────
-    cargo_is_nls: bool = False,
-    nls_category: Optional[str] = None,
 ) -> Dict:
     active_oil_zones = [
         zone for zone in check_all_zones(lat, lon) if zone["waste_type"] == "Oil"
     ]
-
     distance_nm = nearest_land_distance_nm(lat, lon)
     in_special_area = len(active_oil_zones) > 0
-    nearest_land_rule_satisfied = distance_nm >= 12
 
-    # ── Core Annex I slop rules ───────────────────────────────────────────────
     rules_checklist = [
         {
             "rule_code": "SPECIAL_AREA",
@@ -268,15 +252,15 @@ def evaluate_slop_discharge(
                 else "Outside Annex I special area"
             ),
             "required_value": "Outside Annex I special area",
-            "note": "Slop discharge is not permitted in Annex I special areas.",
+            "note": "Slop discharge is not permitted in Annex I special areas."
         },
         {
             "rule_code": "DISTANCE_12NM",
             "rule_name": "Distance from nearest land at least 12 NM",
-            "passed": nearest_land_rule_satisfied,
+            "passed": distance_nm >= 12,
             "actual_value": f"{distance_nm:.2f} NM",
             "required_value": ">= 12.00 NM",
-            "note": "For slop discharge, the vessel should be at least 12 NM from nearest land.",
+            "note": "For slop discharge, the vessel should be at least 12 NM from nearest land."
         },
         {
             "rule_code": "EN_ROUTE",
@@ -284,7 +268,7 @@ def evaluate_slop_discharge(
             "passed": ship_speed_knots > 0,
             "actual_value": f"{ship_speed_knots:.2f} knots",
             "required_value": "> 0 knots",
-            "note": "The ship should be proceeding en route.",
+            "note": "The ship should be proceeding en route."
         },
         {
             "rule_code": "ODMCS",
@@ -292,7 +276,7 @@ def evaluate_slop_discharge(
             "passed": odmcs_operational,
             "actual_value": "Operational" if odmcs_operational else "Not operational",
             "required_value": "Operational",
-            "note": "Oil discharge monitoring and control system must be operational.",
+            "note": "Oil discharge monitoring and control system must be operational."
         },
         {
             "rule_code": "OIL_CONTENT",
@@ -300,7 +284,7 @@ def evaluate_slop_discharge(
             "passed": oil_content_ppm < 15,
             "actual_value": f"{oil_content_ppm:.2f} ppm",
             "required_value": "< 15.00 ppm",
-            "note": "Oil content should remain below 15 ppm.",
+            "note": "Oil content should remain below 15 ppm."
         },
         {
             "rule_code": "DISCHARGE_RATE",
@@ -308,116 +292,37 @@ def evaluate_slop_discharge(
             "passed": discharge_rate_lpnm <= 30,
             "actual_value": f"{discharge_rate_lpnm:.2f} L/NM",
             "required_value": "<= 30.00 L/NM",
-            "note": (
-                "Instantaneous discharge rate must not exceed 30 liters per nautical mile."
-            ),
+            "note": "Instantaneous discharge rate must not exceed 30 liters per nautical mile."
         },
     ]
 
-    # ── Phase 3: Annex II NLS rules (MEPC.118(52) as amended) ────────────────
-    # Only appended when the caller declares NLS cargo via cargo_is_nls=True.
-    # Rules sourced from MARPOL Annex II Regulation 13 and the attached image.
-    if cargo_is_nls:
-        nls_label = f" (Category {nls_category})" if nls_category else ""
-        rules_checklist += [
-            {
-                "rule_code": "NLS_SPEED_7KT",
-                "rule_name": f"Minimum speed 7 knots — NLS self-propelled{nls_label}",
-                "passed": ship_speed_knots >= 7,
-                "actual_value": f"{ship_speed_knots:.2f} knots",
-                "required_value": ">= 7.00 knots",
-                "note": (
-                    "MARPOL Annex II Reg 13: minimum speed for NLS slop discharge "
-                    "from self-propelled vessels. (MEPC.118(52) as amended)"
-                ),
-            },
-            {
-                "rule_code": "NLS_DEPTH_25M",
-                "rule_name": "Water depth at least 25 metres",
-                # Placeholder — real check requires bathymetry integration (Phase 4).
-                # Value is conservatively set to True so it does not block discharge
-                # where depth is genuinely unknown; operators must confirm independently.
-                "passed": True,
-                "actual_value": "Unknown — bathymetry integration pending (Phase 4)",
-                "required_value": ">= 25 metres",
-                "note": (
-                    "Annex II Reg 13: discharge requires water depth ≥ 25 m. "
-                    "Operator must confirm independently until bathymetry API is integrated."
-                ),
-            },
-            {
-                "rule_code": "NLS_DISTANCE_12NM",
-                "rule_name": f"NLS discharge — at least 12 NM from land{nls_label}",
-                "passed": nearest_land_rule_satisfied,
-                "actual_value": f"{distance_nm:.2f} NM",
-                "required_value": ">= 12.00 NM",
-                "note": (
-                    "Annex II Reg 13: NLS residues must be discharged more than 12 NM "
-                    "from nearest land, in water depth of at least 25 m."
-                ),
-            },
-        ]
-
-        # Category X requires prewash before any tank washing water is discharged.
-        if nls_category and nls_category.upper() == "X":
-            rules_checklist.append(
-                {
-                    "rule_code": "NLS_PREWASH_CAT_X",
-                    "rule_name": "Category X — prewash required before discharge",
-                    # Prewash compliance cannot be detected automatically;
-                    # flag as False to force operator acknowledgement.
-                    "passed": False,
-                    "actual_value": "Cannot be verified automatically",
-                    "required_value": "Prewash completed and logged in ORB Part II",
-                    "note": (
-                        "MARPOL Annex II Reg 13.6: Category X NLS requires a prewash "
-                        "with water prior to any tank cleaning. Prewash effluent must be "
-                        "discharged to a reception facility. Operator must confirm."
-                    ),
-                }
-            )
-
     all_passed = all(rule["passed"] for rule in rules_checklist)
-
-    zone_status = (
-        "SAFE" if (not in_special_area and nearest_land_rule_satisfied) else "RESTRICTED"
-    )
-
-    # Build disposal label — distinguish Annex I vs. Annex I+II
-    discharge_label = "Slop / Oil mixed water"
-    if cargo_is_nls:
-        discharge_label = f"Slop / NLS residues{' (Cat ' + nls_category + ')' if nls_category else ''}"
 
     return {
         "evaluation_type": "slop_check",
         "distance_to_nearest_land_nm": distance_nm,
-        "nearest_land_rule_satisfied": nearest_land_rule_satisfied,
+        "nearest_land_rule_satisfied": distance_nm >= 12,
         "in_special_area": in_special_area,
-        "zone_status": zone_status,
+        "zone_status": "SAFE" if not in_special_area else "RESTRICTED",
         "active_zones": active_oil_zones,
         "annex_summary": build_annex_summary(active_oil_zones),
         "disposal_assessment": [
             {
                 "code": "slop",
-                "label": discharge_label,
+                "label": "Slop / Oil mixed water",
                 "allowed": all_passed,
                 "reason": (
-                    "Slop discharge is permitted under the current Annex I"
-                    + (" + Annex II NLS" if cargo_is_nls else "")
-                    + " operational inputs."
+                    "Slop discharge is permitted under the current Annex I operational inputs."
                     if all_passed
-                    else "Slop discharge is not permitted because one or more rules failed."
+                    else "Slop discharge is not permitted because one or more Annex I rules failed."
                 ),
             }
         ],
         "rules_checklist": rules_checklist,
         "summary": (
-            "Slop discharge permitted under the current Annex I"
-            + (" + Annex II NLS" if cargo_is_nls else "")
-            + " rule inputs."
+            "Slop discharge permitted under the current Annex I rule inputs."
             if all_passed
-            else "Slop discharge not permitted under the current rule inputs. "
-            + "See rules_checklist for details."
+            else "Slop discharge not permitted under the current Annex I rule inputs."
         ),
         "metadata": {
             "ship_speed_knots": ship_speed_knots,
@@ -425,7 +330,5 @@ def evaluate_slop_discharge(
             "discharge_rate_lpnm": discharge_rate_lpnm,
             "tank_capacity_m3": tank_capacity_m3,
             "odmcs_operational": odmcs_operational,
-            "cargo_is_nls": cargo_is_nls,
-            "nls_category": nls_category,
         },
     }

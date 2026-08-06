@@ -14,10 +14,8 @@ app/
   problem_details.py RFC 7807 helpers and FastAPI exception handlers
   models.py          Pydantic v2 request/response schemas
   routers/           HTTP layer
-static/js/dashboard.js  dashboard controls, API client, Leaflet markers and panels
-static/js/zones-overlay.js native Leaflet GeoJSON rendering for MARPOL areas
-static/js/globe.js       Three.js hero globe
-index.html               markup + CSS, loads the three classic scripts above
+static/app.js        modular vanilla ES6 frontend
+index.html           markup + CSS, loads /static/app.js
 tests/               pytest suites (91 tests)
 ```
 
@@ -181,11 +179,13 @@ so a new backend problem type renders sensibly without a frontend change.
 
 ### Map rendering
 
-The Live Map fetches `GET /api/v1/zones/geojson` once and renders every MARPOL area
-as a native Leaflet GeoJSON layer. It also plots the latest checked vessel position
-and route polyline built from the API's server-sampled `route_points`. Geometry is
-deliberately kept out of compliance responses: those are high-frequency payloads,
-while the GeoJSON endpoint is a separate, cacheable map resource.
+After a successful check the frontend plots the ship marker, a 12 NM (22,224 m)
+territorial-sea circle, origin/destination port markers, the route polyline built from
+the API's `route_points` (a server-sampled geodesic — straight-leg fallback if absent),
+and the polygons of the returned active zones, fetched from
+`GET /api/v1/zones/geojson?zone_id=…`. Geometry is deliberately kept out of the
+compliance responses: those are the high-frequency payloads and must stay small; the
+GeoJSON endpoint is a separate, cacheable, filtered call.
 
 ### Single origin (`app/main.py`)
 

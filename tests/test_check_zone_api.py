@@ -110,15 +110,13 @@ def test_point_just_inside_mediterranean_west_edge(client):
 
 
 def test_point_just_outside_mediterranean_west_edge(client):
-    # 0.1° west of the Mediterranean boundary is not in either Mediterranean
-    # special-area polygon. It can still be in the newer North-East Atlantic ECA.
+    # 0.1° west of the boundary: Atlantic side, outside every registered zone.
     response = post_zone(client, 36.0, -5.7)
     assert response.status_code == 200
 
     body = response.json()
-    assert "ANNEX1_MEDITERRANEAN" not in zone_ids(response)
-    assert "ANNEX5_MEDITERRANEAN" not in zone_ids(response)
-    assert body["zone_status"] == "RESTRICTED"
+    assert body["active_zones"] == []
+    assert body["zone_status"] == "SAFE"
 
 
 @pytest.mark.parametrize(

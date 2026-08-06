@@ -4,14 +4,14 @@
  * Vanilla ES6, no framework, no build step. The file is organised as a set of
  * small modules held in closures:
  *
- *   config   â†’ API base resolution and endpoint paths
- *   dom      â†’ element lookup and HTML escaping
- *   api      â†’ fetch wrapper that understands RFC 7807 problem+json
- *   store    â†’ per-panel state objects + a render function per panel
- *   maps     â†’ the three Leaflet instances and their layers
- *   views    â†’ pure state â†’ HTML functions
- *   panels   â†’ zone / slop / route controllers
- *   history  â†’ localStorage-backed session log
+ *   config   → API base resolution and endpoint paths
+ *   dom      → element lookup and HTML escaping
+ *   api      → fetch wrapper that understands RFC 7807 problem+json
+ *   store    → per-panel state objects + a render function per panel
+ *   maps     → the three Leaflet instances and their layers
+ *   views    → pure state → HTML functions
+ *   panels   → zone / slop / route controllers
+ *   history  → localStorage-backed session log
  *
  * The rendering contract is one-way: handlers only ever call setState(), and
  * setState() is the only thing that calls a panel's render(). Nothing else
@@ -21,21 +21,13 @@
 
 'use strict';
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─────────────────────────────── config ─────────────────────────────── */
 
-// Deployed backend (Railway). The dashboard itself is hosted separately
-// (Vercel / static hosting), so any non-local origin defaults to this API.
-const RAILWAY_API = 'https://volteo-maritime-marpol-zone-api.up.railway.app';
-
-// Same-origin when developing locally (uvicorn serves index.html and /static);
-// otherwise default to the deployed Railway API. The #apiBase input still
-// overrides this at runtime.
+// Same-origin by default (FastAPI serves index.html and /static), falling back
+// to the conventional local uvicorn port when the page is opened from file://.
 const API_BASE = (() => {
   const origin = window.location.origin;
-  const isHttp = origin && origin.startsWith('http');
-  const isLocal = isHttp && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-  if (isLocal || origin === RAILWAY_API) return origin;
-  return RAILWAY_API;
+  return origin && origin.startsWith('http') ? origin : 'http://localhost:8000';
 })();
 
 const ENDPOINTS = {
@@ -47,7 +39,7 @@ const ENDPOINTS = {
 };
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-const TILE_OPTIONS = { maxZoom: 18, attribution: 'Â© OpenStreetMap contributors' };
+const TILE_OPTIONS = { maxZoom: 18, attribution: '© OpenStreetMap contributors' };
 const INITIAL_VIEW = { center: [20, 0], zoom: 2 };
 const HEALTH_POLL_MS = 15000;
 const HISTORY_LIMIT = 30;
@@ -59,7 +51,7 @@ const COLORS = {
   warning: '#ffb648'
 };
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ dom â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ──────────────────────────────── dom ──────────────────────────────── */
 
 const id = elementId => document.getElementById(elementId);
 
@@ -71,7 +63,7 @@ const escapeHtml = value => {
 
 const formatNum = (value, digits = 2) =>
   value === null || value === undefined || Number.isNaN(Number(value))
-    ? 'â€”'
+    ? '—'
     : Number(value).toFixed(digits);
 
 const safeArray = value => (Array.isArray(value) ? value : []);
@@ -83,7 +75,7 @@ const numberFrom = elementId => {
 
 const textFrom = (elementId, fallback = '') => id(elementId).value.trim() || fallback;
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ api â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ──────────────────────────────── api ──────────────────────────────── */
 
 /** An RFC 7807 problem document raised as an Error. */
 class ApiProblem extends Error {
@@ -156,7 +148,7 @@ const postJson = (path, payload) =>
 const isOnLandProblem = problem =>
   typeof problem.type === 'string' && problem.type.endsWith('/coordinates-on-land');
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ store â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─────────────────────────────── store ─────────────────────────────── */
 
 const emptyPanel = () => ({ status: 'idle', result: null, problem: null, request: null });
 
@@ -178,7 +170,7 @@ function setState(panel, patch) {
   if (render) render(state[panel]);
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ maps â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─────────────────────────────── maps ─────────────────────────────── */
 
 const maps = (() => {
   const instances = { zone: null, slop: null, route: null };
@@ -191,7 +183,7 @@ const maps = (() => {
         '<div style="width:28px;height:28px;border-radius:50%;background:' +
         COLORS.danger +
         ';border:3px solid #fff;box-shadow:0 2px 10px rgba(255,93,108,.6);' +
-        'display:grid;place-items:center;font-size:14px;line-height:1;">â›”</div>',
+        'display:grid;place-items:center;font-size:14px;line-height:1;">⛔</div>',
       iconSize: [28, 28],
       iconAnchor: [14, 14],
       popupAnchor: [0, -16]
@@ -224,7 +216,7 @@ const maps = (() => {
     layers[key] = {
       ship: L.marker(INITIAL_VIEW.center).addTo(map).bindPopup('Ship position'),
       radius: L.circle(INITIAL_VIEW.center, {
-        radius: 22224, // 12 NM in metres â€” the nearest-land threshold
+        radius: 22224, // 12 NM in metres — the nearest-land threshold
         color: COLORS.primary,
         fillColor: COLORS.primary,
         fillOpacity: 0.12,
@@ -345,8 +337,8 @@ const maps = (() => {
 
     setShip('route', ship[0], ship[1], {
       label: result.is_on_route
-        ? `<b style="color:${COLORS.accent}">âœ“ On route</b><br>${escapeHtml(result.ship_id)}`
-        : `<b style="color:${COLORS.danger}">â›” Off route</b><br>${escapeHtml(result.ship_id)}`,
+        ? `<b style="color:${COLORS.accent}">✓ On route</b><br>${escapeHtml(result.ship_id)}`
+        : `<b style="color:${COLORS.danger}">⛔ Off route</b><br>${escapeHtml(result.ship_id)}`,
       onLand: !result.is_on_route,
       open: true
     });
@@ -378,7 +370,7 @@ const maps = (() => {
   };
 })();
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─────────────────────────────── views ─────────────────────────────── */
 
 const tag = (text, mode) => `<span class="tag ${mode}">${escapeHtml(text)}</span>`;
 
@@ -484,7 +476,7 @@ function renderDisposalAssessment(result) {
   return listWrap(
     items.map(item =>
       listItem({
-        icon: item.allowed ? 'âœ“' : 'âœ—',
+        icon: item.allowed ? '✓' : '✗',
         iconMode: item.allowed ? 'ok' : 'no',
         title: item.label || item.code || 'Assessment item',
         subtitle: item.reason || 'No explanation returned.',
@@ -501,7 +493,7 @@ function renderRulesChecklist(result) {
   return listWrap(
     rules.map(rule =>
       listItem({
-        icon: rule.passed ? 'âœ“' : 'âœ—',
+        icon: rule.passed ? '✓' : '✗',
         iconMode: rule.passed ? 'ok' : 'no',
         title: rule.rule_name || rule.rule_code || 'Rule',
         subtitle: rule.note || 'No note returned.',
@@ -517,11 +509,11 @@ function renderRulesChecklist(result) {
 function renderProblem(problem) {
   const validationErrors = safeArray(problem.errors).map(error =>
     listItem({
-      icon: 'âœ—',
+      icon: '✗',
       iconMode: 'no',
       title: error.field || 'Field',
       subtitle: error.message || 'Invalid value',
-      meta: `<div><strong>Type</strong> ${escapeHtml(error.type || 'â€”')}</div>`
+      meta: `<div><strong>Type</strong> ${escapeHtml(error.type || '—')}</div>`
     })
   );
 
@@ -559,7 +551,7 @@ function renderZoneView(result) {
       ${statCard(
         'Distance to nearest land',
         `${formatNum(result.distance_to_nearest_land_nm, 2)} NM`,
-        result.nearest_land_rule_satisfied ? 'âœ… 12 NM rule satisfied.' : 'âš ï¸ Below the 12 NM threshold.'
+        result.nearest_land_rule_satisfied ? '✅ 12 NM rule satisfied.' : '⚠️ Below the 12 NM threshold.'
       )}
       ${statCard(
         'Active zones',
@@ -600,7 +592,7 @@ function renderSlopView(result) {
       ${statCard(
         'Distance to nearest land',
         `${formatNum(result.distance_to_nearest_land_nm, 2)} NM`,
-        result.nearest_land_rule_satisfied ? 'âœ… 12 NM rule satisfied.' : 'âš ï¸ Below the 12 NM threshold.'
+        result.nearest_land_rule_satisfied ? '✅ 12 NM rule satisfied.' : '⚠️ Below the 12 NM threshold.'
       )}
       ${statCard(
         'Rules passed',
@@ -625,7 +617,7 @@ function renderSlopView(result) {
             result.in_special_area ? 'error' : 'ok'
           )}
           ${tag(
-            result.nearest_land_rule_satisfied ? 'â‰¥12 NM from land' : '<12 NM from land',
+            result.nearest_land_rule_satisfied ? '≥12 NM from land' : '<12 NM from land',
             result.nearest_land_rule_satisfied ? 'ok' : 'warning'
           )}
         </div>${renderDisposalAssessment(result)}`
@@ -647,7 +639,7 @@ function renderRouteView(result) {
           iconMode: 'ok',
           title: (point && point.label) || title,
           subtitle: `${formatNum(point && point.lat, 4)}, ${formatNum(point && point.lon, 4)}`,
-          meta: `<div><strong>Source</strong> ${escapeHtml((point && point.source) || 'â€”')}</div>`
+          meta: `<div><strong>Source</strong> ${escapeHtml((point && point.source) || '—')}</div>`
         })
       ])
     );
@@ -711,7 +703,7 @@ function renderRouteView(result) {
     ${crossedCard}`;
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ panels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ────────────────────────────── panels ────────────────────────────── */
 
 /**
  * Binds one panel's state to the DOM: spinner visibility, results container,
@@ -728,7 +720,7 @@ function createPanelRenderer({ spinnerId, resultsId, renderResult }) {
       return;
     }
     if (panelState.status === 'loading') {
-      container.innerHTML = `<div class="empty-state">Contacting the compliance APIâ€¦</div>`;
+      container.innerHTML = `<div class="empty-state">Contacting the compliance API…</div>`;
       return;
     }
     if (panelState.status === 'error') {
@@ -790,14 +782,14 @@ async function runZoneCheck() {
   if (wasteTypeFilter) payload.waste_type_filter = wasteTypeFilter;
 
   setState('zone', { status: 'loading', problem: null, request: payload });
-  maps.setShip('zone', latitude, longitude, { label: `${shipId} â€” evaluatingâ€¦` });
+  maps.setShip('zone', latitude, longitude, { label: `${shipId} — evaluating…` });
 
   try {
     const result = await postJson(ENDPOINTS.checkZone, payload);
     setState('zone', { status: 'ready', result, problem: null });
 
     maps.setShip('zone', latitude, longitude, {
-      label: `<b>${escapeHtml(shipId)}</b><br>${escapeHtml(result.zone_status)} â€” ${formatNum(
+      label: `<b>${escapeHtml(shipId)}</b><br>${escapeHtml(result.zone_status)} — ${formatNum(
         result.distance_to_nearest_land_nm,
         2
       )} NM from land`,
@@ -840,7 +832,7 @@ async function runSlopCheck() {
   };
 
   setState('slop', { status: 'loading', problem: null, request: payload });
-  maps.setShip('slop', latitude, longitude, { label: `${shipId} â€” evaluatingâ€¦` });
+  maps.setShip('slop', latitude, longitude, { label: `${shipId} — evaluating…` });
 
   try {
     const result = await postJson(ENDPOINTS.checkSlop, payload);
@@ -952,7 +944,7 @@ function handlePanelError(panel, error, context) {
   });
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ history â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ────────────────────────────── history ────────────────────────────── */
 
 function loadHistory() {
   try {
@@ -1010,7 +1002,7 @@ function clearHistory() {
   renderHistory();
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ chrome / shell â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ──────────────────────────── chrome / shell ──────────────────────────── */
 
 const TABS = ['zone', 'slop', 'route', 'history'];
 
@@ -1044,7 +1036,7 @@ function showTab(tabName) {
 function setTheme(theme) {
   state.theme = theme;
   document.documentElement.setAttribute('data-theme', theme);
-  id('themeIcon').textContent = theme === 'dark' ? 'â˜€ï¸' : 'ðŸŒ™';
+  id('themeIcon').textContent = theme === 'dark' ? '☀️' : '🌙';
   id('themeLabel').textContent = 'Switch theme';
 }
 
@@ -1063,14 +1055,14 @@ async function checkHealth() {
   try {
     const health = await request(ENDPOINTS.health);
     const backend = health.spatial_index ? ` (${health.spatial_index.backend})` : '';
-    state.api = { status: 'ok', label: `${health.service} â€” connected${backend}` };
+    state.api = { status: 'ok', label: `${health.service} — connected${backend}` };
   } catch (error) {
     state.api = { status: 'bad', label: 'API offline or blocked' };
   }
   renderApiStatus();
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ map sync button handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─────────────────────── map sync button handlers ─────────────────────── */
 
 const syncMapFromZone = () => maps.setShip('zone', numberFrom('z_lat'), numberFrom('z_lon'), {
   label: `Zone check position`
@@ -1092,7 +1084,7 @@ const resetMapView = () => maps.reset('zone');
 const resetSlopMapView = () => maps.reset('slop');
 const resetRouteMapView = () => maps.reset('route');
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ──────────────────────────────── init ──────────────────────────────── */
 
 function init() {
   const apiBaseInput = id('apiBase');

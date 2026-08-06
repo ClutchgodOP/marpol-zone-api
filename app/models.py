@@ -4,9 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class ShipRequest(BaseModel):
-    model_config = {"extra": "forbid"}  # OWASP API3 — reject unexpected fields
-
-    ship_id: str = Field(..., min_length=1, max_length=64, example="SHIP_101")
+    ship_id: str = Field(..., example="SHIP_101")
     latitude: float = Field(..., ge=-90, le=90, example=17.389)
     longitude: float = Field(..., ge=-180, le=180, example=78.487)
     waste_type_filter: Optional[str] = Field(
@@ -21,30 +19,14 @@ class ShipRequest(BaseModel):
 
 
 class SlopCheckRequest(BaseModel):
-    model_config = {"extra": "forbid"}  # OWASP API3
-
-    ship_id: str = Field(..., min_length=1, max_length=64, example="SHIP_101")
+    ship_id: str = Field(..., example="SHIP_101")
     latitude: float = Field(..., ge=-90, le=90, example=17.389)
     longitude: float = Field(..., ge=-180, le=180, example=78.487)
-    ship_speed_knots: float = Field(..., ge=0, le=50, example=8.5)
-    oil_content_ppm: float = Field(..., ge=0, le=1_000_000, example=12.0)
-    discharge_rate_lpnm: float = Field(..., ge=0, le=10_000, example=25.0)
-    tank_capacity_m3: float = Field(..., ge=0, le=500_000, example=5000.0)
+    ship_speed_knots: float = Field(..., ge=0, example=8.5)
+    oil_content_ppm: float = Field(..., ge=0, example=12.0)
+    discharge_rate_lpnm: float = Field(..., ge=0, example=25.0)
+    tank_capacity_m3: float = Field(..., ge=0, example=5000.0)
     odmcs_operational: bool = Field(..., example=True)
-    # ── Phase 3: Annex II NLS fields ─────────────────────────────────────────
-    cargo_is_nls: bool = Field(
-        default=False,
-        description="True if slop contains NLS (Category X, Y, or Z) cargo residues.",
-        example=False,
-    )
-    nls_category: Optional[str] = Field(
-        default=None,
-        description=(
-            "NLS category per MARPOL Annex II: X (most toxic / prewash required), "
-            "Y (significant hazard), or Z (minor hazard). Required when cargo_is_nls=True."
-        ),
-        example="Y",
-    )
 
 
 class ZoneViolation(BaseModel):
@@ -97,21 +79,26 @@ class ComplianceResponse(BaseModel):
     disposal_assessment: List[DisposalAssessmentItem]
     rules_checklist: List[RuleChecklistItem]
     summary: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
+    metadata: Dict[str, Any] = Field(default_factory=dict)  # fixed: was "meta"
 
 class RouteCheckRequest(BaseModel):
-    model_config = {"extra": "forbid"}  # OWASP API3
+    ship_id: str = Field(..., example="SHIP_101")
 
-    ship_id: str = Field(..., min_length=1, max_length=64, example="SHIP_101")
+    # Current ship position (required)
     latitude: float = Field(..., ge=-90, le=90, example=8.5)
     longitude: float = Field(..., ge=-180, le=180, example=90.0)
-    origin_port: Optional[str] = Field(default=None, max_length=64, example="VISAKHAPATNAM")
+
+    # Route origin — either a port code/name OR raw coordinates
+    origin_port: Optional[str] = Field(default=None, example="VISAKHAPATNAM")
     origin_latitude: Optional[float] = Field(default=None, ge=-90, le=90)
     origin_longitude: Optional[float] = Field(default=None, ge=-180, le=180)
-    destination_port: Optional[str] = Field(default=None, max_length=64, example="SINGAPORE")
+
+    # Route destination — either a port code/name OR raw coordinates
+    destination_port: Optional[str] = Field(default=None, example="SINGAPORE")
     destination_latitude: Optional[float] = Field(default=None, ge=-90, le=90)
     destination_longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+
+    # How wide the acceptable corridor around the great-circle track is, in NM
     corridor_width_nm: float = Field(default=25.0, ge=1, le=500, example=25.0)
 
 
@@ -129,6 +116,8 @@ class RouteCheckResponse(BaseModel):
     route_progress_percent: float
     corridor_width_nm: float
     summary: str
+    # Sampled great-circle track ([lat, lon] pairs) for map rendering, plus the
+    # MARPOL special areas that track crosses.
     route_points: List[List[float]] = Field(default_factory=list)
     zones_crossed: List[ZoneViolation] = Field(default_factory=list)
 

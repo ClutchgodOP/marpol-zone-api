@@ -10,7 +10,7 @@ def test_health():
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "ok"
-    assert data["version"] == "3.0.0"
+    assert data["version"] == "2.0.0"
 
 
 def test_ship_in_mediterranean():

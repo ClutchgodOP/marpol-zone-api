@@ -1,18 +1,3 @@
-"""Geospatial helpers for MARPOL zone/slop/route compliance checks.
-
-Distance, bearing, and route math all use standard spherical-trig formulas
-(haversine, initial bearing, cross-track/along-track projection) on a mean
-Earth radius. Nearest-land distance uses the ``global_land_mask`` raster
-(~1 arc-minute resolution) with an adaptive radial search: a coarse angular
-sweep locates the first radius band containing land, then a binary search
-along that bearing tightens the distance to within a fraction of a nautical
-mile. Results are cached, since the same ship position is frequently
-requested more than once in a single session (map sync, zone check, slop
-check).
-"""
-
-import logging
-from functools import lru_cache
 from math import acos, asin, atan2, cos, degrees, pi, radians, sin, sqrt
 from typing import List, Tuple
 
@@ -24,27 +9,12 @@ from app.problem_details import (
     ProblemException,
 )
 
-logger = logging.getLogger(__name__)
-
-# Mean Earth radius. Used consistently by every distance/bearing helper below
-# so haversine_nm, cross_track_distance_nm, and along_track_distance_nm all
-# agree with each other to the same precision.
-EARTH_RADIUS_KM = 6371.0088
-NM_PER_KM = 0.539956803
-EARTH_RADIUS_NM = EARTH_RADIUS_KM * NM_PER_KM  # ~3440.065 NM
-
 try:
     from global_land_mask import globe as _globe
     _USE_GLOBE = True
 except ImportError:
     _globe = None
     _USE_GLOBE = False
-    logger.warning(
-        "global_land_mask is not installed; nearest_land_distance_nm() and "
-        "is_on_land() are falling back to a 30-point reference-city lookup. "
-        "This is far less accurate and should not be relied on in production "
-        "install global-land-mask (already pinned in requirements.txt)."
-    )
 
 
 def point_in_polygon(lat: float, lon: float, polygon) -> bool:
@@ -84,117 +54,48 @@ def validate_coordinates(lat: float, lon: float, label: str = "position") -> Non
 
 def haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in nautical miles."""
+    R_km = 6371.0088
     dlat = radians(lat2 - lat1)
     dlon = radians(lon2 - lon1)
     a = (
         sin(dlat / 2) ** 2
         + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
     )
-    return EARTH_RADIUS_KM * 2 * asin(sqrt(a)) * NM_PER_KM
+    return R_km * 2 * asin(sqrt(a)) * 0.539956803
 
 
 def is_on_land(lat: float, lon: float) -> bool:
     """Returns True if coordinates are on land anywhere on the globe."""
     if _USE_GLOBE:
         return bool(_globe.is_land(lat, lon))
-    # No land mask available: fail closed on distance (see
-    # _reference_nearest_land_nm) rather than silently assuming open water.
     return False
 
 
-@lru_cache(maxsize=4096)
 def nearest_land_distance_nm(lat: float, lon: float) -> float:
-    """Distance in NM to nearest land. Uses an adaptive grid search when available.
-
-    Cached on exact (lat, lon) pairs, cheap to keep, since dashboards and
-    repeated zone/slop checks routinely re-query the same ship position
-    within a session. Callers should round inputs to a sensible precision
-    (e.g. 4-5 decimal places, ~1-10 m) upstream if they want cache hits across
-    near-duplicate coordinates.
-    """
+    """Distance in NM to nearest land. Uses global grid search when available."""
     if _USE_GLOBE:
         return _globe_nearest_land_nm(lat, lon)
     return _reference_nearest_land_nm(lat, lon)
 
 
 def _globe_nearest_land_nm(lat: float, lon: float) -> float:
-    """Adaptive radial search against the global_land_mask raster.
-
-    Two phases:
-      1. Coarse sweep: grow the search radius in 0.1 degree steps, sampling
-         points around a full circle at each radius, until at least one
-         sample lands on land. Sample density scales with radius so the
-         angular gap between rays stays roughly constant, which keeps this
-         phase from skipping over a nearby coastline that happens to fall
-         between two rays.
-      2. Binary refinement: once a land hit is found along a specific
-         bearing, binary-search the radius between the last confirmed "sea"
-         distance and the confirmed "land" distance to tighten the estimate,
-         rather than reporting the coarse step size.
-
-    Both phases are still bounded by the raster's own ~1 arc-minute (~1.85 km)
-    cell resolution, so results are only as precise as global_land_mask
-    itself, this narrows the search error on top of that floor, it does not
-    remove it. For sub-cell precision, swap this for a vector coastline
-    (Natural Earth/GSHHG) nearest-point query.
-    """
     if _globe.is_land(lat, lon):
         return 0.0
-
-    max_radius_deg = 15.0   # ~900 NM search ceiling
-    step_deg = 0.1
-    steps = int(max_radius_deg / step_deg)
-
-    hit_radius_deg = None
-    hit_angle = None
-
-    for step in range(1, steps + 1):
-        radius_deg = step * step_deg
-        # Keep angular spacing between samples roughly constant as the
-        # circle grows, instead of a fixed sample count that thins out at
-        # larger radii and can miss a nearby coastline between two rays.
-        n_samples = max(16, int(2 * pi * radius_deg / 0.025))
+    for step in range(1, 151):               # 0.1° to 15.0° (~900 NM)
+        radius_deg = step * 0.1
+        n_samples = max(16, int(radius_deg * 40))
         for i in range(n_samples):
             angle = 2 * pi * i / n_samples
             check_lat = max(-90.0, min(90.0, lat + radius_deg * cos(angle)))
             check_lon = (((lon + radius_deg * sin(angle)) + 180.0) % 360.0) - 180.0
             if _globe.is_land(check_lat, check_lon):
-                hit_radius_deg = radius_deg
-                hit_angle = angle
-                break
-        if hit_radius_deg is not None:
-            break
-
-    if hit_radius_deg is None:
-        return 999.0  # No land found within the search ceiling.
-
-    # Binary refinement along the same bearing: the previous step's radius
-    # is a confirmed "sea" bound, hit_radius_deg is a confirmed "land" bound.
-    lo = hit_radius_deg - step_deg
-    hi = hit_radius_deg
-    for _ in range(12):  # tightens well under the raster's own resolution
-        mid = (lo + hi) / 2
-        mid_lat = max(-90.0, min(90.0, lat + mid * cos(hit_angle)))
-        mid_lon = (((lon + mid * sin(hit_angle)) + 180.0) % 360.0) - 180.0
-        if _globe.is_land(mid_lat, mid_lon):
-            hi = mid
-        else:
-            lo = mid
-
-    final_lat = max(-90.0, min(90.0, lat + hi * cos(hit_angle)))
-    final_lon = (((lon + hi * sin(hit_angle)) + 180.0) % 360.0) - 180.0
-    return round(haversine_nm(lat, lon, final_lat, final_lon), 2)
+                return round(haversine_nm(lat, lon, check_lat, check_lon), 2)
+    return 999.0
 
 
 def _reference_nearest_land_nm(lat: float, lon: float) -> float:
-    """Fallback 30-point method, only used if global-land-mask is not installed.
-
-    This is a coarse safety net, not an accurate distance calculation: it
-    measures distance to the nearest named reference city, not to the
-    nearest actual coastline. Treat any result from this path as an upper
-    bound at best, and prefer installing global-land-mask.
-    """
-    land_reference_points: List[Tuple[str, float, float]] = [
+    """Fallback 30-point method — only used if global-land-mask is not installed."""
+    LAND_REFERENCE_POINTS: List[Tuple[str, float, float]] = [
         ("Spain", 36.0, -5.6), ("France", 43.0, 5.0),
         ("Italy", 38.0, 15.0), ("Greece", 37.9, 23.7),
         ("Egypt", 31.2, 29.9), ("Saudi Arabia Red Sea", 21.5, 39.2),
@@ -212,9 +113,10 @@ def _reference_nearest_land_nm(lat: float, lon: float) -> float:
         ("Australia East", -33.86, 151.2), ("Japan", 35.7, 139.7),
     ]
     return round(
-        min(haversine_nm(lat, lon, rlat, rlon) for _, rlat, rlon in land_reference_points),
-        2,
+        min(haversine_nm(lat, lon, rlat, rlon) for _, rlat, rlon in LAND_REFERENCE_POINTS), 2
     )
+    
+EARTH_RADIUS_NM = 3440.065  # mean Earth radius in nautical miles
 
 
 def initial_bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -240,13 +142,7 @@ def cross_track_distance_nm(
     theta13 = radians(initial_bearing_deg(origin_lat, origin_lon, lat, lon))
     theta12 = radians(initial_bearing_deg(origin_lat, origin_lon, dest_lat, dest_lon))
 
-    # Clamp before asin(): floating-point error can push this fractionally
-    # outside [-1, 1] (e.g. 1.0000000000000002), which raises a domain
-    # ValueError. Same guard already used below in along_track_distance_nm.
-    sin_component = sin(d13) * sin(theta13 - theta12)
-    sin_component = max(-1.0, min(1.0, sin_component))
-
-    d_xt = asin(sin_component) * EARTH_RADIUS_NM
+    d_xt = asin(sin(d13) * sin(theta13 - theta12)) * EARTH_RADIUS_NM
     return d_xt
 
 
@@ -269,7 +165,7 @@ def along_track_distance_nm(
 
     d_at = acos(cos_ratio) * EARTH_RADIUS_NM
 
-    # acos() only ever returns a magnitude in [0, pi], it cannot on its own
+    # acos() only ever returns a magnitude in [0, pi] — it cannot on its own
     # distinguish a point that projects AHEAD of the origin (toward the
     # destination) from one that projects BEHIND it (before departure).
     # Recover the sign by comparing the bearing to the point against the
