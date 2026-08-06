@@ -23,11 +23,14 @@
 
 /* ─────────────────────────────── config ─────────────────────────────── */
 
-// Same-origin by default (FastAPI serves index.html and /static), falling back
-// to the conventional local uvicorn port when the page is opened from file://.
+// Production: Railway API. Local: same-origin (FastAPI dev server).
+const RAILWAY_API = 'https://volteo-maritime-marpol-zone-api.up.railway.app';
+
 const API_BASE = (() => {
   const origin = window.location.origin;
-  return origin && origin.startsWith('http') ? origin : 'http://localhost:8000';
+  if (!origin || !origin.startsWith('http')) return 'http://localhost:8000'; // file://
+  if (origin.includes('localhost') || origin.includes('127.0.0.1')) return origin; // local dev
+  return RAILWAY_API; // Vercel or any deployed host → always point to Railway
 })();
 
 const ENDPOINTS = {
